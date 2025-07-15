@@ -6,21 +6,23 @@ class Config:
         {
             "client_id": "",
             "client_secret": "",
-            "username": "",
+            "username": "jim.w1234@icloud.com",
             "password": "",
-        },
-        # Add more accounts as needed
-        {
-            "client_id": "AnotherClientID",
-            "client_secret": "AnotherClientSecret",
-            "username": "AnotherUsername",
-            "password": "AnotherPassword",
-        },
+        }
     ]
 
 class Botconfig:
     proxies = [
-        # Add more proxies as needed
+        '38.154.227.167:5868:olzpjyuy:ekl53b9x59d2',
+        '92.113.242.158:6742:olzpjyuy:ekl53b9x59d2',
+        '23.95.150.145:6114:olzpjyuy:ekl53b9x59d2',
+        '198.23.239.134:6540:olzpjyuy:ekl53b9x59d2',
+        '207.244.217.165:6712:olzpjyuy:ekl53b9x59d2',
+        '107.172.163.27:6543:olzpjyuy:ekl53b9x59d2',
+        '216.10.27.159:6837:olzpjyuy:ekl53b9x59d2',
+        '136.0.207.84:6661:olzpjyuy:ekl53b9x59d2',
+        '142.147.128.93:6593:olzpjyuy:ekl53b9x59d2',
+        '206.41.172.74:6634:olzpjyuy:ekl53b9x59d2'
     ]
     
     new_posts = False
@@ -52,9 +54,21 @@ class Botconfig:
     
     # If set to False, will only post in the specific subreddits
     subreddits = [
-        "test",
-        "gachagaming",
-        "TowerofGod",
+        "AskReddit",
+        "funny",
+        "gaming",
+        "aww",
+        "Music",
+        "movies",
+        "todayilearned",
+        "pics",
+        "science",
+        "worldnews",
+        "technology",
+        "interestingasfuck",
+        "askscience",
+        "dataisbeautiful",
+        "explainlikeimfive"
     ]
 
     posts = [
