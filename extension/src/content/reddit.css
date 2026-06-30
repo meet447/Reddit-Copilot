@@ -1,0 +1,13 @@
+#rkf-badge {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 2147483646;
+  background: rgba(255, 69, 0, 0.92);
+  color: #fff;
+  font: 12px/1.2 system-ui, sans-serif;
+  padding: 8px 12px;
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reddit Karma Farmer</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>Karma Farmer</h1>
+    <p class="subtitle">Autonomous Reddit engagement</p>
+  </header>
+
+  <section class="card status-card">
+    <div class="row">
+      <span>Status</span>
+      <span id="status-pill" class="pill off">Off</span>
+    </div>
+    <p id="status-text" class="muted">Loading...</p>
+    <div class="stats">
+      <div><strong id="comments-today">0</strong><span>today</span></div>
+      <div><strong id="total-comments">0</strong><span>total</span></div>
+    </div>
+  </section>
+
+  <section class="card actions">
+    <button id="toggle-btn" class="primary">Enable</button>
+    <button id="run-now-btn" class="secondary">Run now</button>
+    <button id="options-btn" class="ghost">Settings</button>
+  </section>
+
+  <section class="card">
+    <h2>Recent activity</h2>
+    <ul id="log-list" class="log-list"></ul>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -30,6 +30,13 @@ python index.py
 
 To deploy the farmer on hosting services like Render and more, configure the hosting server to execute `web.py`.
 Render and hugging face spaces recommended!
+
+## Chrome Extension (Recommended)
+
+For the best karma farming experience with lower ban risk, use the **Chrome extension** in the `extension/` folder. It runs autonomously in your browser with AI-generated comments and human-like typing.
+
+See [extension/README.md](extension/README.md) for install and setup instructions.
+
 ## Features
 
 - **Effortless Engagement**: Automatically engage with Reddit posts by generating comments that resonate with the community's interests.

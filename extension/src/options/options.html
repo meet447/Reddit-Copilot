@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Karma Farmer Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Reddit Karma Farmer Settings</h1>
+      <p>Configure your AI provider, target subreddits, and safety limits.</p>
+    </header>
+
+    <form id="settings-form">
+      <section class="panel">
+        <h2>AI Provider</h2>
+        <label>
+          Provider
+          <select id="aiProvider" name="aiProvider">
+            <option value="groq">Groq (recommended, fast & cheap)</option>
+            <option value="openai">OpenAI</option>
+            <option value="openrouter">OpenRouter</option>
+          </select>
+        </label>
+        <label>
+          API Key
+          <input id="apiKey" name="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+        </label>
+        <label>
+          Model
+          <input id="apiModel" name="apiModel" type="text" placeholder="llama-3.3-70b-versatile" />
+        </label>
+        <label>
+          Custom API URL (optional)
+          <input id="apiBaseUrl" name="apiBaseUrl" type="url" placeholder="Leave blank for provider default" />
+        </label>
+      </section>
+
+      <section class="panel">
+        <h2>Target Subreddits</h2>
+        <label>
+          Subreddits (one per line, without r/)
+          <textarea id="subreddits" name="subreddits" rows="6" placeholder="CasualConversation&#10;NoStupidQuestions"></textarea>
+        </label>
+        <label class="checkbox">
+          <input id="useOldReddit" name="useOldReddit" type="checkbox" />
+          Use old.reddit.com (more reliable for automation)
+        </label>
+        <label class="checkbox">
+          <input id="skipNsfw" name="skipNsfw" type="checkbox" />
+          Skip NSFW posts
+        </label>
+        <label class="checkbox">
+          <input id="warmupMode" name="warmupMode" type="checkbox" />
+          Warmup mode (friendly comments, no promotion)
+        </label>
+      </section>
+
+      <section class="panel">
+        <h2>Safety Limits</h2>
+        <div class="grid">
+          <label>
+            Max comments / day
+            <input id="maxCommentsPerDay" name="maxCommentsPerDay" type="number" min="1" max="20" />
+          </label>
+          <label>
+            Max comments / sub / day
+            <input id="maxPerSubredditPerDay" name="maxPerSubredditPerDay" type="number" min="1" max="10" />
+          </label>
+          <label>
+            Min delay (minutes)
+            <input id="minDelayMinutes" name="minDelayMinutes" type="number" min="3" max="120" />
+          </label>
+          <label>
+            Max delay (minutes)
+            <input id="maxDelayMinutes" name="maxDelayMinutes" type="number" min="5" max="180" />
+          </label>
+          <label>
+            Active from (hour, 0-23)
+            <input id="activeHoursStart" name="activeHoursStart" type="number" min="0" max="23" />
+          </label>
+          <label>
+            Active until (hour, 0-23)
+            <input id="activeHoursEnd" name="activeHoursEnd" type="number" min="0" max="23" />
+          </label>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button type="submit" class="primary">Save settings</button>
+        <span id="save-status" class="save-status"></span>
+      </div>
+    </form>
+
+    <section class="panel tips">
+      <h2>Tips for best results</h2>
+      <ul>
+        <li>Use a Reddit account that is at least 30 days old with verified email.</li>
+        <li>Start with warmup mode and low-traffic subs like CasualConversation.</li>
+        <li>Keep daily limits at 8 or fewer to avoid spam detection.</li>
+        <li>Stay logged into Reddit in this browser while the extension runs.</li>
+        <li>Groq offers a free tier — great for getting started cheaply.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
