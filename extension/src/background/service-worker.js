@@ -12,7 +12,7 @@ import {
   recordFailure,
   resetDailyStatsIfNeeded,
   saveSettings,
-  updateSettings
+  setNetworkBlock
 } from "../shared/storage.js";
 
 let workerTabId = null;
@@ -48,16 +48,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 async function getStatus() {
   const settings = await getSettings();
   const gate = canCommentNow(settings);
+  const stats = resetDailyStatsIfNeeded(settings.stats);
+  const networkBlocked =
+    stats.networkBlockedUntil && Date.now() < stats.networkBlockedUntil;
+
   return {
     enabled: settings.enabled,
     gate,
-    stats: resetDailyStatsIfNeeded(settings.stats),
+    networkBlocked,
+    stats,
     subreddits: settings.subreddits,
     recentLog: (settings.activityLog || []).slice(0, 8)
   };
 }
 
 async function toggleEnabled(enabled) {
+  if (enabled) {
+    try {
+      await ensureRedditSession();
+    } catch (error) {
+      await addLogEntry(error.message, "error");
+      return { ok: false, error: error.message };
+    }
+  }
+
   const settings = await saveSettings({ enabled });
   if (enabled) {
     await addLogEntry("Karma farmer enabled.");
@@ -84,20 +98,77 @@ async function scheduleNextTick(minutes) {
   return delay;
 }
 
-async function getOrCreateWorkerTab(url) {
-  if (workerTabId) {
+async function findExistingRedditTab() {
+  const tabs = await chrome.tabs.query({ url: ["https://*.reddit.com/*", "http://*.reddit.com/*"] });
+  return tabs.find((tab) => tab.id && !tab.url?.startsWith("chrome-extension://")) || null;
+}
+
+async function handleNetworkBlock(tabId) {
+  await setNetworkBlock();
+  await chrome.alarms.clear(ALARM_NAME);
+  if (tabId) {
     try {
-      const tab = await chrome.tabs.get(workerTabId);
-      await chrome.tabs.update(tab.id, { url, active: false });
-      return tab.id;
+      await chrome.tabs.update(tabId, { active: true });
     } catch {
-      workerTabId = null;
+      // ignore
     }
   }
+}
 
-  const tab = await chrome.tabs.create({ url, active: false });
+async function ensureRedditSession() {
+  let tab = await findExistingRedditTab();
+
+  if (!tab?.id) {
+    throw new Error(
+      "Open reddit.com in Chrome and log in first. The extension reuses your logged-in tab."
+    );
+  }
+
   workerTabId = tab.id;
+
+  // Warm session on www.reddit.com before navigating elsewhere
+  if (!tab.url?.includes("www.reddit.com") || tab.url?.includes("old.reddit.com")) {
+    await chrome.tabs.update(tab.id, { url: "https://www.reddit.com/", active: false });
+    await waitForTabLoad(tab.id);
+    await sleep(2000 + Math.random() * 2000);
+  }
+
+  const session = await sendToTab(tab.id, { type: "SESSION_CHECK" });
+
+  if (session?.blocked) {
+    await handleNetworkBlock(tab.id);
+    throw new Error(
+      "Reddit blocked this network. Use home WiFi (no VPN), log in manually, wait 1 hour."
+    );
+  }
+
+  if (!session?.loggedIn) {
+    await chrome.tabs.update(tab.id, { url: "https://www.reddit.com/login", active: true });
+    throw new Error("Not logged into Reddit. Log in, then re-enable the extension.");
+  }
+
   return tab.id;
+}
+
+async function navigateWorkerTab(tabId, url) {
+  await chrome.tabs.update(tabId, { url, active: false });
+  await waitForTabLoad(tabId);
+  await sleep(2500 + Math.random() * 2500);
+
+  const session = await sendToTab(tabId, { type: "SESSION_CHECK" });
+  if (session?.blocked) {
+    await handleNetworkBlock(tabId);
+    throw new Error("Reddit network block during navigation.");
+  }
+  if (!session?.loggedIn) {
+    throw new Error("Reddit session lost. Log in again.");
+  }
+}
+
+async function getOrCreateWorkerTab(url) {
+  const tabId = await ensureRedditSession();
+  await navigateWorkerTab(tabId, url);
+  return tabId;
 }
 
 async function waitForTabLoad(tabId, timeoutMs = 30000) {
@@ -166,7 +237,6 @@ async function runFarmCycle() {
     await addLogEntry(`Scanning r/${subreddit} for threads...`);
 
     const tabId = await getOrCreateWorkerTab(listingUrl(subreddit, settings.useOldReddit));
-    await waitForTabLoad(tabId);
 
     const scan = await sendToTab(tabId, {
       type: "SCAN_LISTING",
@@ -183,8 +253,7 @@ async function runFarmCycle() {
     const post = scan.posts[Math.floor(Math.random() * Math.min(scan.posts.length, 12))];
     const targetUrl = postUrl(post.url, settings.useOldReddit);
 
-    await chrome.tabs.update(tabId, { url: targetUrl });
-    await waitForTabLoad(tabId);
+    await navigateWorkerTab(tabId, targetUrl);
 
     const gateCheck = await sendToTab(tabId, { type: "CHECK_COMMENT_GATE" });
     if (!gateCheck?.allowed) {
@@ -226,9 +295,16 @@ async function runFarmCycle() {
     await scheduleNextTick();
     return { ok: true, subreddit, postId: post.id };
   } catch (error) {
-    await recordFailure(error.message);
-    await scheduleNextTick();
-    return { ok: false, reason: error.message };
+    const msg = error.message || String(error);
+    if (msg.includes("network block") || msg.includes("blocked this network")) {
+      // setNetworkBlock already called
+    } else {
+      await recordFailure(msg);
+    }
+    if ((await getSettings()).enabled) {
+      await scheduleNextTick(30);
+    }
+    return { ok: false, reason: msg };
   } finally {
     isRunning = false;
   }

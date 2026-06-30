@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, MAX_COMMENTED_POSTS, MAX_LOG_ENTRIES } from "./constants.js";
+import { DEFAULT_SETTINGS, MAX_COMMENTED_POSTS, MAX_LOG_ENTRIES, NETWORK_BLOCK_HOURS } from "./constants.js";
 
 export async function getSettings() {
   const stored = await chrome.storage.local.get("settings");
@@ -70,6 +70,24 @@ export async function recordComment(postId, subreddit) {
       }
     };
   });
+}
+
+export async function setNetworkBlock(hours = NETWORK_BLOCK_HOURS) {
+  await updateSettings((settings) => {
+    const stats = resetDailyStatsIfNeeded(settings.stats);
+    return {
+      ...settings,
+      enabled: false,
+      stats: {
+        ...stats,
+        networkBlockedUntil: Date.now() + hours * 60 * 60 * 1000
+      }
+    };
+  });
+  await addLogEntry(
+    `Reddit network block detected. Paused ${hours}h — log into reddit.com on home WiFi, no VPN.`,
+    "error"
+  );
 }
 
 export async function recordFailure(reason, { critical = true } = {}) {

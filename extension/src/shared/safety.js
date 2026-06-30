@@ -30,6 +30,14 @@ export function canCommentNow(settings) {
     return { ok: false, reason: "Outside active hours. Bot sleeps until your window opens." };
   }
 
+  if (stats.networkBlockedUntil && Date.now() < stats.networkBlockedUntil) {
+    const mins = Math.ceil((stats.networkBlockedUntil - Date.now()) / 60000);
+    return {
+      ok: false,
+      reason: `Reddit network block active (~${mins} min left). Log into reddit.com manually on home WiFi.`
+    };
+  }
+
   if (stats.circuitBreakerUntil && Date.now() < stats.circuitBreakerUntil) {
     const mins = Math.ceil((stats.circuitBreakerUntil - Date.now()) / 60000);
     return { ok: false, reason: `Circuit breaker active. Paused for ~${mins} min after repeated failures.` };

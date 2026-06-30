@@ -90,6 +90,20 @@ extension/
     └── shared/                        # AI, safety, storage
 ```
 
+## Troubleshooting: "whoa there, pardner" / network block
+
+Reddit shows this when it flags your connection as automated or suspicious.
+
+**Fix steps (in order):**
+
+1. **Disable VPN / proxy** — use home WiFi or mobile data
+2. **Open reddit.com manually** in Chrome and log in
+3. **Wait 30–60 minutes** before re-enabling the extension
+4. **Reload the extension** at `chrome://extensions` after updating
+5. The extension now **reuses your logged-in tab** instead of opening cold background tabs
+
+The extension auto-pauses for 6 hours when it detects this block page.
+
 ## Disclaimer
 
 For educational purposes. Automated engagement may violate Reddit's Terms of Service. Use responsibly, respect subreddit rules, and never use this for spam or vote manipulation. Account suspension is always possible.

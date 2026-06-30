@@ -4,6 +4,49 @@ function isOldReddit() {
   return window.location.hostname === "old.reddit.com";
 }
 
+function isNetworkBlocked() {
+  const text = (document.body?.innerText || document.title || "").toLowerCase();
+  return (
+    text.includes("whoa there, pardner") ||
+    text.includes("blocked due to a network policy") ||
+    text.includes("network policy") && text.includes("blocked")
+  );
+}
+
+function isLoggedIn() {
+  if (isNetworkBlocked()) return false;
+
+  if (isOldReddit()) {
+    const loginLink = document.querySelector('#header .user a[href*="login"]');
+    const registerLink = document.querySelector('#header .user a[href*="register"]');
+    return !loginLink && !registerLink;
+  }
+
+  return !!(
+    document.querySelector(
+      '#expand-user-drawer-button, [data-testid="user-drawer-button"], shreddit-async-loader[bundlename="profile_overview"]'
+    ) ||
+    document.querySelector('a[href*="/settings"]') ||
+    document.querySelector('[id*="USER_DROPDOWN"]')
+  );
+}
+
+function getSessionStatus() {
+  const blocked = isNetworkBlocked();
+  const loggedIn = !blocked && isLoggedIn();
+  return { blocked, loggedIn };
+}
+
+function assertSessionReady() {
+  const { blocked, loggedIn } = getSessionStatus();
+  if (blocked) {
+    throw new Error("Reddit network block page detected");
+  }
+  if (!loggedIn) {
+    throw new Error("Not logged into Reddit — log in at reddit.com first");
+  }
+}
+
 function extractPostId(url) {
   const match = url.match(/comments\/([a-z0-9]+)/i);
   return match ? match[1] : null;
@@ -218,11 +261,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     try {
       if (message.type === "PING") {
-        sendResponse({ ok: true, page: window.location.href });
+        sendResponse({ ok: true, page: window.location.href, ...getSessionStatus() });
+        return;
+      }
+
+      if (message.type === "SESSION_CHECK") {
+        sendResponse({ ok: true, ...getSessionStatus() });
         return;
       }
 
       if (message.type === "SCAN_LISTING") {
+        assertSessionReady();
         await humanScroll();
         const posts = isOldReddit()
           ? scanOldRedditListing(message)
@@ -232,17 +281,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
 
       if (message.type === "GET_POST_CONTEXT") {
+        assertSessionReady();
         sendResponse({ ok: true, ...getPostContent() });
         return;
       }
 
       if (message.type === "CHECK_COMMENT_GATE") {
+        assertSessionReady();
         const allowed = isOldReddit() ? hasCommentGateOldReddit() : hasCommentGateNewReddit();
         sendResponse({ ok: true, allowed });
         return;
       }
 
       if (message.type === "POST_COMMENT") {
+        assertSessionReady();
         const result = await postComment(message.comment);
         const visible = await verifyCommentVisible(message.comment);
         sendResponse({ ok: true, ...result, visible });

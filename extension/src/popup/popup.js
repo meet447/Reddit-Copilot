@@ -15,9 +15,15 @@ async function refresh() {
 
   statusPill.textContent = enabled ? "On" : "Off";
   statusPill.className = `pill ${enabled ? "on" : "off"}`;
-  statusText.textContent = status.gate?.ok
-    ? "Ready to farm karma autonomously."
-    : status.gate?.reason || "Configure settings to begin.";
+
+  if (status.networkBlocked) {
+    statusText.textContent =
+      "Reddit blocked this network. Log into reddit.com on home WiFi (no VPN), wait 1 hour, then re-enable.";
+  } else if (!status.gate?.ok) {
+    statusText.textContent = status.gate?.reason || "Configure settings to begin.";
+  } else {
+    statusText.textContent = "Ready. Uses your logged-in Reddit tab — stay signed in.";
+  }
 
   commentsToday.textContent = status.stats?.commentsToday ?? 0;
   totalComments.textContent = status.stats?.totalComments ?? 0;

@@ -13,7 +13,7 @@ export const DEFAULT_SETTINGS = {
   maxDelayMinutes: 22,
   activeHoursStart: 8,
   activeHoursEnd: 23,
-  useOldReddit: true,
+  useOldReddit: false,
   skipNsfw: true,
   warmupMode: true,
   aiProvider: "groq",
@@ -29,7 +29,8 @@ export const DEFAULT_SETTINGS = {
     totalComments: 0,
     lastCommentAt: 0,
     consecutiveFailures: 0,
-    circuitBreakerUntil: 0
+    circuitBreakerUntil: 0,
+    networkBlockedUntil: 0
   }
 };
 
@@ -55,4 +56,4 @@ export const ALARM_NAME = "karma-farm-tick";
 export const MAX_LOG_ENTRIES = 100;
 export const MAX_COMMENTED_POSTS = 5000;
 export const CIRCUIT_BREAKER_FAILURES = 3;
-export const CIRCUIT_BREAKER_MINUTES = 120;
+export const NETWORK_BLOCK_HOURS = 6;

@@ -1,8 +1,5 @@
-import os
 import praw
 from requests import Session
-from time import sleep
-from fake_useragent import UserAgent
 from praw.exceptions import RedditAPIException
 from llm.main import create_response
 from config import Config, Botconfig
