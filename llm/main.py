@@ -3,59 +3,69 @@ import g4f.Provider
 from g4f.client import Client
 import g4f
 
-def create_response(post):
-    try:
-        # Initialize g4f client with a RetryProvider
-        client = Client(
-            provider=g4f.Provider.RetryProvider([
-                g4f.Provider.Acytoo,
-                g4f.Provider.You,
-                g4f.Provider.Vercel,
-                g4f.Provider.PerplexityLabs,
-                g4f.Provider.H2o,
-                g4f.Provider.HuggingChat,
-                g4f.Provider.HuggingFace,
-                g4f.Provider.AiChatOnline,
-                g4f.Provider.DeepInfra,
-                g4f.Provider.Llama,
-                g4f.Provider.Liaobots,
-                g4f.Provider.MetaAI,
-                g4f.Provider.Hashnode,
-                g4f.Provider.ChatgptFree,
-            ])
-        )
+PREFERRED_PROVIDERS = [
+    "You",
+    "PollinationsAI",
+    "OpenaiChat",
+    "HuggingChat",
+    "HuggingFace",
+    "DeepInfra",
+    "MetaAI",
+    "Groq",
+    "Gemini",
+    "Cloudflare",
+    "Copilot",
+    "Cerebras",
+    "PuterJS",
+]
 
-        max_retries = 5  # Maximum number of retries
+
+def get_available_providers():
+    providers = []
+    for provider_name in PREFERRED_PROVIDERS:
+        provider = getattr(g4f.Provider, provider_name, None)
+        if provider is not None:
+            providers.append(provider)
+    return providers
+
+
+def create_response(post):
+    providers = get_available_providers()
+    if not providers:
+        print("No compatible g4f providers are available.")
+        return None
+
+    try:
+        client = Client(provider=g4f.Provider.RetryProvider(providers))
+
+        max_retries = 5
         attempt = 0
 
         while attempt < max_retries:
             try:
-                # Generate chat completion using g4f
                 chat_completion = client.chat.completions.create(
                     model=g4f.models.default,
                     messages=[{"role": "user", "content": post}],
                     stream=True
                 )
 
-                # Concatenate response chunks
                 response = ""
                 for completion in chat_completion:
                     data = completion.choices[0].delta.content or ""
                     response += data
 
-                # Remove enclosing quotes if present
                 if response.startswith('"') and response.endswith('"'):
                     response = response[1:-1]
 
-                return response
+                return response.strip() or None
 
             except Exception as e:
-                if "402" in str(e):  # Check if error 402 occurred
+                if "402" in str(e):
                     attempt += 1
                     print(f"Error 402 encountered. Retrying... ({attempt}/{max_retries})")
-                    time.sleep(2 ** attempt)  # Exponential backoff
+                    time.sleep(2 ** attempt)
                 else:
-                    raise e  # Re-raise other exceptions
+                    raise e
 
         print("Max retries reached. Could not process the request.")
         return None

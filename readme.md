@@ -50,6 +50,18 @@ Your updated `config.py` file looks good! It nicely organizes the configuration 
 
 Ensure to configure the following parameters in the `config.py` file:
 
+### Reddit API setup
+
+1. Go to https://www.reddit.com/prefs/apps
+2. Click **create another app...**
+3. Choose **script** as the app type (required for password authentication)
+4. Set the redirect URI to `http://localhost:8080`
+5. Copy the client ID and client secret into `config.py`
+
+If you see `unauthorized_client` or `Only script apps may use password auth`, your Reddit app was not created as a **script** type app.
+
+### Bot settings
+
 - `client_id`: Your Reddit API client ID.
 - `client_secret`: Your Reddit API client secret.
 - `username`: Your Reddit account username.

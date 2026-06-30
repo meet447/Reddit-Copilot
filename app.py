@@ -1,14 +1,27 @@
-import os
 import praw
 from requests import Session
-from time import sleep
 from fake_useragent import UserAgent
 from praw.exceptions import RedditAPIException
+from prawcore.exceptions import OAuthException
 from llm.main import create_response
 from config import Config, Botconfig
 import random
 from modules.sleep.main import goto_sleep
 from modules.logging.main import write_log
+
+
+def get_api_error_type(error: RedditAPIException) -> str:
+    if error.items:
+        return error.items[0].error_type
+    return "UNKNOWN"
+
+
+def get_valid_accounts() -> list:
+    return [
+        account for account in Config.accounts
+        if account.get("client_id") and account.get("client_secret")
+        and account.get("username") and account.get("password")
+    ]
 
 class RedditBot:
     def __init__(self, account, proxy=None) -> None:
@@ -50,6 +63,15 @@ class RedditBot:
             print(f"[LOGIN] - Logged in as {self.reddit.user.me()}")
             write_log(f"[LOGIN] - Logged in as {self.reddit.user.me()}")
             return True
+        except OAuthException as e:
+            message = (
+                f"[LOGIN] - Authentication failed for {self.username}: {e}. "
+                "Reddit requires a 'script' type app for password auth. "
+                "Create one at https://www.reddit.com/prefs/apps and update config.py."
+            )
+            print(message)
+            write_log(message)
+            return False
         except Exception as e:
             print(f"[LOGIN] - Failed to log in: {e}")
             write_log(f"[LOGIN] - Failed to log in: {e}")
@@ -59,12 +81,15 @@ class RedditBot:
         trending_topics = []
         commented_posts = self.load_commented_posts()
 
-        if not Botconfig.new_posts:
-            for submission in self.reddit.subreddit("all").hot(limit=500):
-                if submission.id not in commented_posts:
-                    trending_topics.append(submission)
+        if Botconfig.all_subreddits:
+            subreddit_names = ["all"]
         else:
-            for submission in self.reddit.subreddit("all").new(limit=500):
+            subreddit_names = Botconfig.subreddits
+
+        for subreddit_name in subreddit_names:
+            subreddit = self.reddit.subreddit(subreddit_name)
+            listing = subreddit.new(limit=500) if Botconfig.new_posts else subreddit.hot(limit=500)
+            for submission in listing:
                 if submission.id not in commented_posts:
                     trending_topics.append(submission)
 
@@ -96,6 +121,11 @@ class RedditBot:
         else:
             comment = random.choice(Botconfig.ads)
 
+        if not comment or not str(comment).strip():
+            print("[SKIP] - No comment generated. Skipping post.")
+            write_log("[SKIP] - No comment generated. Skipping post.")
+            return
+
         while True:
             try:
                 submission.reply(comment)
@@ -103,17 +133,18 @@ class RedditBot:
                 write_log("[SUCCESS] - replied to the post")
                 break
             except RedditAPIException as e:
-                if e.error_type == "RATELIMIT":
+                error_type = get_api_error_type(e)
+                if error_type == "RATELIMIT":
                     print("[RATE LIMIT] - Rate limited. Sleeping.")
                     write_log("[RATE LIMIT] - Rate limited. Sleeping.")
                     break
-                elif e.error_type == "THREAD_LOCKED":
+                elif error_type == "THREAD_LOCKED":
                     print("Thread locked. Skipping.")
                     write_log("Thread locked. Skipping.")
                     break
                 else:
-                    print(e.error_type)
-                    write_log(e.error_type)
+                    print(error_type)
+                    write_log(error_type)
                     break
 
         print(f"[Replied to] - {submission.title} with {comment}")
@@ -140,16 +171,30 @@ def get_working_proxy(account):
     return None  # If no proxies work
 
 def main():
-    # Retrieve trending topics once
-    reddit_instance = RedditBot(Config.accounts[0])  # Initializing for subreddit access
+    accounts = get_valid_accounts()
+    if not accounts:
+        message = "[ERROR] - No valid Reddit accounts found in config.py."
+        print(message)
+        write_log(message)
+        return
+
+    reddit_instance = RedditBot(accounts[0])
+    if not reddit_instance.login():
+        return
+
     trending_topics = reddit_instance.get_trending_topics()
+    if not trending_topics:
+        message = "[INFO] - No new posts found to comment on."
+        print(message)
+        write_log(message)
+        return
 
     for submission in trending_topics:
         print(f"[PROCESSING POST] - '{submission.title}'")
         write_log(f"[PROCESSING POST] - '{submission.title}'")
 
         # Process the single post for all accounts
-        for account in Config.accounts:
+        for account in accounts:
             proxy = get_working_proxy(account)
 
             # Initialize RedditBot with or without proxy based on availability

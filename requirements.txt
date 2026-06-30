@@ -1,6 +1,6 @@
 fake_useragent==1.2.1
 Flask==3.0.0
-praw==7.7.1
+praw==7.8.1
 Requests==2.31.0
 g4f[all]
 gunicorn
