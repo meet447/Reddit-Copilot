@@ -1,11 +1,28 @@
-# Ignore compiled Python files
-*.pyc
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
 
-# Ignore log files
+# Local secrets and runtime data
+.env
+config.yaml
+rcopilot.db
+*.db
 log.txt
-
-# Ignore commented posts text file
 commented_posts.txt
 
-# Ignore config.py
-config.py
+# Next.js
+web/node_modules/
+web/.next/
+web/out/
+web/.env.local
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

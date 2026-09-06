@@ -1,0 +1,30 @@
+[project]
+name = "reddit-copilot"
+version = "1.0.0"
+description = "Human-in-the-loop Reddit reply drafter"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "praw>=7.7.1",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "openai>=1.40.0",
+  "python-dotenv>=1.0.0",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "httpx>=0.27.0",
+]
+
+[project.scripts]
+rcopilot = "rcopilot.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["rcopilot*"]

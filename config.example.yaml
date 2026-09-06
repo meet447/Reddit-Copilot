@@ -1,0 +1,37 @@
+subreddits:
+  - python
+  - learnpython
+listing: hot   # hot | new
+fetch_limit: 25
+db_path: rcopilot.db
+
+accounts:
+  - name: default
+    # secrets loaded from .env — see .env.example
+    user_agent: "reddit-copilot/1.0 by u/YOUR_USERNAME"
+
+llm:
+  base_url: https://api.openai.com/v1
+  model: gpt-4o-mini
+  # api_key from LLM_API_KEY in .env
+
+rate_limits:
+  min_interval_seconds: 120
+  daily_cap: 10
+
+voice:
+  product: ""
+  tone: ""
+  persona: ""
+  avoid: ""
+
+discovery:
+  keywords: []
+  min_score: 0.25
+
+worker:
+  interval_seconds: 300
+
+onboarding_complete: false
+
+# optional prompt_template override

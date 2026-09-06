@@ -1,0 +1,477 @@
+"""FastAPI JSON API for Reddit Copilot."""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from rcopilot import __version__
+from rcopilot.config import (
+    AppConfig,
+    DiscoveryConfig,
+    LLMConfig,
+    RateLimits,
+    VoiceConfig,
+    WorkerConfig,
+    _env_account_prefix,
+    load_config,
+    sanitize_config,
+    save_config,
+    write_env_secrets,
+)
+from rcopilot.pipeline import (
+    approve_draft,
+    cancel_schedule,
+    draft_one,
+    draft_pending,
+    edit_draft,
+    fetch_and_store,
+    post_approved,
+    regenerate_draft,
+    reject_draft,
+    run_once,
+    schedule_draft,
+    skip_post,
+)
+from rcopilot.store import Store
+
+logger = logging.getLogger(__name__)
+
+DRAFT_API_FIELDS = (
+    "id",
+    "post_id",
+    "account_name",
+    "body",
+    "status",
+    "error",
+    "permalink",
+    "created_at",
+    "updated_at",
+    "run_at",
+    "subreddit",
+    "title",
+    "selftext",
+    "url",
+    "post_permalink",
+    "created_utc",
+    "top_comments",
+    "relevance_score",
+    "score_reasons",
+)
+
+
+class DraftEditBody(BaseModel):
+    body: str
+
+
+class ApproveBody(BaseModel):
+    body: str | None = None
+
+
+class ScheduleBody(BaseModel):
+    run_at: str
+
+
+class ConfigUpdateBody(BaseModel):
+    subreddits: list[str] | None = None
+    listing: str | None = None
+    fetch_limit: int | None = None
+    voice: dict[str, str] | None = None
+    discovery: dict[str, Any] | None = None
+    rate_limits: dict[str, int] | None = None
+    worker: dict[str, int] | None = None
+    accounts: list[dict[str, str]] | None = None
+    llm: dict[str, str] | None = None
+    prompt_template: str | None = None
+    onboarding_complete: bool | None = None
+
+
+class SecretsBody(BaseModel):
+    reddit_client_id: str | None = None
+    reddit_client_secret: str | None = None
+    reddit_username: str | None = None
+    reddit_password: str | None = None
+    llm_api_key: str | None = None
+    account_name: str | None = None
+
+
+def _serialize_draft(draft: dict[str, Any]) -> dict[str, Any]:
+    return {key: draft.get(key) for key in DRAFT_API_FIELDS}
+
+
+def _serialize_post(post: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": post["id"],
+        "subreddit": post["subreddit"],
+        "title": post["title"],
+        "selftext": post["selftext"],
+        "url": post["url"],
+        "permalink": post["permalink"],
+        "created_utc": post["created_utc"],
+        "top_comments": post.get("top_comments") or [],
+        "relevance_score": post.get("relevance_score", 0),
+        "score_reasons": post.get("score_reasons") or [],
+        "keywords_matched": post.get("keywords_matched") or [],
+        "skipped": post.get("skipped", False),
+    }
+
+
+def create_app(config_path: str | None = None) -> FastAPI:
+    resolved_path = Path(config_path or "config.yaml")
+    app = FastAPI(title="Reddit Copilot API", version=__version__)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+
+    @app.exception_handler(Exception)
+    async def generic_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled API error: %s", exc)
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    def get_config() -> AppConfig:
+        if not resolved_path.exists():
+            raise HTTPException(status_code=400, detail=f"Config not found: {resolved_path}")
+        return load_config(resolved_path)
+
+    def get_store(config: AppConfig) -> Store:
+        store = Store(config.db_path)
+        store.ensure_schema()
+        return store
+
+    @app.on_event("startup")
+    def on_startup() -> None:
+        if resolved_path.exists():
+            config = load_config(resolved_path)
+            store = Store(config.db_path)
+            store.ensure_schema()
+
+    @app.get("/api/health")
+    def health() -> dict[str, Any]:
+        return {"ok": True, "version": __version__}
+
+    @app.get("/api/status")
+    def status() -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        counts = store.count_drafts_by_status()
+        return {
+            "counts": {
+                "pending": counts.get("pending", 0),
+                "approved": counts.get("approved", 0),
+                "scheduled": counts.get("scheduled", 0),
+                "posted": counts.get("posted", 0),
+                "rejected": counts.get("rejected", 0),
+                "error": counts.get("error", 0),
+            },
+            "config_loaded": True,
+        }
+
+    @app.get("/api/drafts")
+    def list_drafts(
+        status: str = Query(default="pending"),
+    ) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        filter_status = None if status == "all" else status
+        drafts = store.list_drafts(status=filter_status)
+        return {"drafts": [_serialize_draft(d) for d in drafts]}
+
+    @app.get("/api/drafts/{draft_id}")
+    def get_draft(draft_id: int) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        draft = store.get_draft(draft_id)
+        if draft is None:
+            raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+        return _serialize_draft(draft)
+
+    @app.patch("/api/drafts/{draft_id}")
+    def patch_draft(draft_id: int, body: DraftEditBody) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            edit_draft(store, draft_id, body.body)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft)  # type: ignore[arg-type]
+
+    @app.post("/api/drafts/{draft_id}/approve")
+    def approve(draft_id: int, body: ApproveBody | None = None) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        draft = store.get_draft(draft_id)
+        if draft is None:
+            raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+        try:
+            approve_draft(store, draft_id, body=body.body if body else None)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft)  # type: ignore[arg-type]
+
+    @app.post("/api/drafts/{draft_id}/reject")
+    def reject(draft_id: int) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            reject_draft(store, draft_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft)  # type: ignore[arg-type]
+
+    @app.post("/api/drafts/{draft_id}/regenerate")
+    def regenerate(draft_id: int) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            regenerate_draft(config, store, draft_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft)  # type: ignore[arg-type]
+
+    @app.post("/api/drafts/{draft_id}/post")
+    def post_draft(draft_id: int) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            results = post_approved(config, store, draft_id=draft_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if not results:
+            raise HTTPException(status_code=400, detail="Draft is not approved or not due")
+        result = results[0]
+        if not result.get("ok"):
+            if result.get("skipped"):
+                raise HTTPException(status_code=400, detail=result.get("error", "Rate limited"))
+            raise HTTPException(status_code=400, detail=result.get("error", "Post failed"))
+        draft = store.get_draft(draft_id)
+        return {"result": result, "draft": _serialize_draft(draft)}  # type: ignore[arg-type]
+
+    @app.post("/api/drafts/{draft_id}/schedule")
+    def schedule(draft_id: int, body: ScheduleBody) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            run_at = datetime.fromisoformat(body.run_at)
+            if run_at.tzinfo is None:
+                run_at = run_at.replace(tzinfo=timezone.utc)
+            schedule_draft(store, draft_id, run_at)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft)  # type: ignore[arg-type]
+
+    @app.post("/api/drafts/{draft_id}/unschedule")
+    def unschedule(draft_id: int) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            cancel_schedule(store, draft_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft)  # type: ignore[arg-type]
+
+    @app.get("/api/posts")
+    def list_posts(
+        undrafted: bool = Query(default=False),
+        skipped: bool | None = Query(default=None),
+    ) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        posts = store.list_posts(
+            undrafted=undrafted if undrafted else None,
+            skipped=skipped,
+        )
+        return {"posts": [_serialize_post(p) for p in posts]}
+
+    @app.post("/api/posts/{post_id}/draft")
+    def draft_post(post_id: str) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            draft_id = draft_one(config, store, post_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft)  # type: ignore[arg-type]
+
+    @app.post("/api/posts/{post_id}/skip")
+    def skip(post_id: str) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            skip_post(store, post_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        post = store.get_post(post_id)
+        return _serialize_post(post)  # type: ignore[arg-type]
+
+    @app.post("/api/actions/fetch")
+    def action_fetch() -> dict[str, int]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            fetched = fetch_and_store(config, store)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"fetched": fetched}
+
+    @app.post("/api/actions/draft")
+    def action_draft() -> dict[str, int]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            drafted = draft_pending(config, store)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"drafted": drafted}
+
+    @app.post("/api/actions/run-once")
+    def action_run_once() -> dict[str, int]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            return run_once(config, store)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/schedule")
+    def get_schedule() -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        drafts = store.list_scheduled()
+        return {"drafts": [_serialize_draft(d) for d in drafts]}
+
+    @app.get("/api/activity")
+    def get_activity(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        events = store.list_audit(limit=limit)
+        return {"events": events}
+
+    @app.get("/api/config")
+    def get_config_route() -> dict[str, Any]:
+        config = get_config()
+        return sanitize_config(config)
+
+    @app.put("/api/config")
+    def put_config(body: ConfigUpdateBody) -> dict[str, Any]:
+        config = get_config()
+
+        if body.subreddits is not None:
+            config.subreddits = body.subreddits
+        if body.listing is not None:
+            config.listing = body.listing
+        if body.fetch_limit is not None:
+            config.fetch_limit = body.fetch_limit
+        if body.voice is not None:
+            config.voice = VoiceConfig(
+                product=body.voice.get("product", config.voice.product),
+                tone=body.voice.get("tone", config.voice.tone),
+                persona=body.voice.get("persona", config.voice.persona),
+                avoid=body.voice.get("avoid", config.voice.avoid),
+            )
+        if body.discovery is not None:
+            config.discovery = DiscoveryConfig(
+                keywords=body.discovery.get("keywords", config.discovery.keywords),
+                min_score=float(body.discovery.get("min_score", config.discovery.min_score)),
+            )
+        if body.rate_limits is not None:
+            config.rate_limits = RateLimits(
+                min_interval_seconds=int(
+                    body.rate_limits.get("min_interval_seconds", config.rate_limits.min_interval_seconds)
+                ),
+                daily_cap=int(body.rate_limits.get("daily_cap", config.rate_limits.daily_cap)),
+            )
+        if body.worker is not None:
+            config.worker = WorkerConfig(
+                interval_seconds=int(
+                    body.worker.get("interval_seconds", config.worker.interval_seconds)
+                ),
+            )
+        if body.accounts is not None:
+            for update in body.accounts:
+                name = update.get("name")
+                if not name:
+                    continue
+                for account in config.accounts:
+                    if account.name == name and "user_agent" in update:
+                        account.user_agent = update["user_agent"]
+        if body.llm is not None:
+            config.llm = LLMConfig(
+                base_url=body.llm.get("base_url", config.llm.base_url),
+                model=body.llm.get("model", config.llm.model),
+                api_key=config.llm.api_key,
+            )
+        if body.prompt_template is not None:
+            config.prompt_template = body.prompt_template
+        if body.onboarding_complete is not None:
+            config.onboarding_complete = body.onboarding_complete
+
+        save_config(resolved_path, config)
+        return sanitize_config(config)
+
+    @app.put("/api/secrets")
+    def put_secrets(body: SecretsBody) -> dict[str, bool]:
+        env_path = resolved_path.parent / ".env"
+        mapping: dict[str, str] = {}
+        account_name = body.account_name or "default"
+
+        if body.reddit_client_id is not None:
+            key = (
+                "REDDIT_CLIENT_ID"
+                if account_name == "default"
+                else f"{_env_account_prefix(account_name)}_CLIENT_ID"
+            )
+            mapping[key] = body.reddit_client_id
+        if body.reddit_client_secret is not None:
+            key = (
+                "REDDIT_CLIENT_SECRET"
+                if account_name == "default"
+                else f"{_env_account_prefix(account_name)}_CLIENT_SECRET"
+            )
+            mapping[key] = body.reddit_client_secret
+        if body.reddit_username is not None:
+            key = (
+                "REDDIT_USERNAME"
+                if account_name == "default"
+                else f"{_env_account_prefix(account_name)}_USERNAME"
+            )
+            mapping[key] = body.reddit_username
+        if body.reddit_password is not None:
+            key = (
+                "REDDIT_PASSWORD"
+                if account_name == "default"
+                else f"{_env_account_prefix(account_name)}_PASSWORD"
+            )
+            mapping[key] = body.reddit_password
+        if body.llm_api_key is not None:
+            mapping["LLM_API_KEY"] = body.llm_api_key
+
+        if mapping:
+            write_env_secrets(env_path, mapping)
+        return {"ok": True}
+
+    return app
