@@ -103,7 +103,7 @@ def test_scheduled_draft_status(tmp_path: Path) -> None:
     store.cancel_schedule(draft_id)
     draft = store.get_draft(draft_id)
     assert draft is not None
-    assert draft["status"] == "approved"
+    assert draft["status"] == "pending"
     assert draft["run_at"] is None
 
 

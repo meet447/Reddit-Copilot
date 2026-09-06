@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from typing import Iterator
 
 from openai import OpenAI
 
@@ -35,6 +36,89 @@ def _strip_enclosing_quotes(text: str) -> str:
     return text
 
 
+def _build_comment_prompt(
+    title: str,
+    selftext: str,
+    comments: list[dict],
+    prompt_template: str,
+    *,
+    product: str = "",
+    tone: str = "",
+    persona: str = "",
+    avoid: str = "",
+) -> str:
+    return prompt_template.format_map(
+        SafeDict(
+            title=title or "",
+            selftext=selftext or "(no body)",
+            comments=_format_comments(comments),
+            product=product,
+            tone=tone,
+            persona=persona,
+            avoid=avoid,
+        )
+    )
+
+
+def iter_comment_deltas(
+    llm_config: LLMConfig,
+    title: str,
+    selftext: str,
+    comments: list[dict],
+    prompt_template: str,
+    *,
+    product: str = "",
+    tone: str = "",
+    persona: str = "",
+    avoid: str = "",
+) -> Iterator[str]:
+    """Stream raw comment text deltas from an OpenAI-compatible chat completion API."""
+    prompt = _build_comment_prompt(
+        title,
+        selftext,
+        comments,
+        prompt_template,
+        product=product,
+        tone=tone,
+        persona=persona,
+        avoid=avoid,
+    )
+
+    client = OpenAI(base_url=llm_config.base_url, api_key=llm_config.api_key)
+    logger.debug("Requesting streaming LLM completion with model %s", llm_config.model)
+
+    stream = client.chat.completions.create(
+        model=llm_config.model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.95,
+        stream=True,
+    )
+
+    for chunk in stream:
+        content = chunk.choices[0].delta.content if chunk.choices else None
+        if content:
+            yield content
+
+
+def finalize_comment(text: str, *, product: str = "") -> str:
+    """Strip enclosing quotes, lint, and return the cleaned comment draft."""
+    result = _strip_enclosing_quotes(text)
+    if not result:
+        raise RuntimeError("LLM returned an empty response after cleanup")
+
+    lint = apply_lint(result, product=product)
+    if "empty" in lint.codes:
+        raise RuntimeError("LLM draft was empty after anti-slop cleanup")
+    remaining = lint.codes - {"em_dash", "bot_phrase"}
+    if remaining:
+        logger.warning("Draft lint issues after cleanup: %s", sorted(remaining))
+    elif lint.codes:
+        logger.info("Draft auto-cleaned: %s", sorted(lint.codes))
+
+    logger.debug("Generated comment (%d chars)", len(lint.cleaned))
+    return lint.cleaned
+
+
 def generate_comment(
     llm_config: LLMConfig,
     title: str,
@@ -48,16 +132,15 @@ def generate_comment(
     avoid: str = "",
 ) -> str:
     """Generate a Reddit comment using an OpenAI-compatible chat completion API."""
-    prompt = prompt_template.format_map(
-        SafeDict(
-            title=title or "",
-            selftext=selftext or "(no body)",
-            comments=_format_comments(comments),
-            product=product,
-            tone=tone,
-            persona=persona,
-            avoid=avoid,
-        )
+    prompt = _build_comment_prompt(
+        title,
+        selftext,
+        comments,
+        prompt_template,
+        product=product,
+        tone=tone,
+        persona=persona,
+        avoid=avoid,
     )
 
     client = OpenAI(base_url=llm_config.base_url, api_key=llm_config.api_key)
@@ -73,21 +156,7 @@ def generate_comment(
     if not content or not content.strip():
         raise RuntimeError("LLM returned an empty response")
 
-    result = _strip_enclosing_quotes(content)
-    if not result:
-        raise RuntimeError("LLM returned an empty response after cleanup")
-
-    lint = apply_lint(result, product=product)
-    if "empty" in lint.codes:
-        raise RuntimeError("LLM draft was empty after anti-slop cleanup")
-    remaining = lint.codes - {"em_dash", "bot_phrase"}
-    if remaining:
-        logger.warning("Draft lint issues after cleanup: %s", sorted(remaining))
-    elif lint.codes:
-        logger.info("Draft auto-cleaned: %s", sorted(lint.codes))
-
-    logger.debug("Generated comment (%d chars)", len(lint.cleaned))
-    return lint.cleaned
+    return finalize_comment(content, product=product)
 
 
 def parse_query_list(raw: str, *, limit: int = QUERY_LIMIT) -> list[str]:

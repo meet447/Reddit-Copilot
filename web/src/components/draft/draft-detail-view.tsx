@@ -7,12 +7,11 @@ import {
   getDraft,
   getDrafts,
   patchDraft,
-  approveDraft,
   rejectDraft,
-  regenerateDraft,
   postDraft,
   scheduleDraft,
   unscheduleDraft,
+  streamDraftGenerate,
   type Draft,
 } from "@/lib/api";
 import {
@@ -24,7 +23,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import {
   IconChevronLeft,
   IconExternal,
-  IconRefresh,
+  IconDraft,
 } from "@/components/ui/icons";
 import { Textarea, Field, Label, Input } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
@@ -43,6 +42,7 @@ export function DraftDetailView({ id }: { id: number }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [streaming, setStreaming] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleValue, setScheduleValue] = useState("");
   const [siblingIds, setSiblingIds] = useState<number[]>([]);
@@ -77,6 +77,13 @@ export function DraftDetailView({ id }: { id: number }) {
       ? siblingIds[currentIndex + 1]
       : null;
 
+  const hasBody = Boolean(body.trim());
+  const canPost =
+    hasBody &&
+    draft != null &&
+    draft.status !== "posted" &&
+    draft.status !== "rejected";
+
   async function saveBody() {
     if (!draft) return;
     await patchDraft(draft.id, body);
@@ -91,16 +98,50 @@ export function DraftDetailView({ id }: { id: number }) {
     setError(null);
     setMessage(null);
     try {
-      if (name !== "regenerate") await saveBody();
+      if (name !== "generate") await saveBody();
       const updated = await fn();
       setDraft(updated);
       setBody(updated.body);
       if (successMsg) setMessage(successMsg);
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "That didn't go through. Check the note and try again.",
+        e instanceof Error
+          ? e.message
+          : "That didn't go through. Check the note and try again.",
       );
     } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleGenerate() {
+    if (!draft || streaming) return;
+    const wasRegen = Boolean(draft.body.trim() || body.trim());
+    setStreaming(true);
+    setBusy("generate");
+    setError(null);
+    setMessage(null);
+    setBody("");
+    try {
+      const updated = await streamDraftGenerate(draft.id, (delta) => {
+        setBody((prev) => prev + delta);
+      });
+      setDraft(updated);
+      setBody(updated.body);
+      setMessage(
+        wasRegen
+          ? "Regenerated. Edit, then post or schedule."
+          : "Draft ready. Edit, then post or schedule.",
+      );
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Drafting failed. Try again.",
+      );
+      await load();
+    } finally {
+      setStreaming(false);
       setBusy(null);
     }
   }
@@ -116,15 +157,6 @@ export function DraftDetailView({ id }: { id: number }) {
       }
 
       switch (e.key.toLowerCase()) {
-        case "a":
-          e.preventDefault();
-          if (draft)
-            runAction(
-              "approve",
-              () => approveDraft(draft.id, body),
-              "Ready when you are — post now or schedule.",
-            );
-          break;
         case "r":
           e.preventDefault();
           if (draft)
@@ -141,9 +173,9 @@ export function DraftDetailView({ id }: { id: number }) {
           setScheduleOpen(true);
           break;
         case "g":
+        case "d":
           e.preventDefault();
-          if (draft)
-            runAction("regenerate", () => regenerateDraft(draft.id));
+          void handleGenerate();
           break;
         case "j":
           if (nextId) router.push(`/queue/${nextId}`);
@@ -197,7 +229,7 @@ export function DraftDetailView({ id }: { id: number }) {
         </div>
         <div className="hidden lg:flex items-center gap-3 text-[12px] text-ink-3">
           <span className="inline-flex items-center gap-1">
-            <Kbd>A</Kbd> approve
+            <Kbd>D</Kbd> draft
           </span>
           <span className="inline-flex items-center gap-1">
             <Kbd>R</Kbd> reject
@@ -207,9 +239,6 @@ export function DraftDetailView({ id }: { id: number }) {
           </span>
           <span className="inline-flex items-center gap-1">
             <Kbd>S</Kbd> schedule
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Kbd>G</Kbd> regenerate
           </span>
           {(prevId || nextId) && (
             <span className="inline-flex items-center gap-1">
@@ -230,14 +259,15 @@ export function DraftDetailView({ id }: { id: number }) {
                   "That didn't go through. Check the note and try again."}
               </Notice>
             )}
-            {busy === "regenerate" && (
+            {streaming && (
               <Notice tone="accent">
                 <span className="inline-flex items-center gap-2">
-                  Drafting in your voice… <Dots />
+                  Writing reply… <Dots />
                 </span>
               </Notice>
             )}
-            {body === draft.body &&
+            {!streaming &&
+              body === draft.body &&
               (draft.lint_warnings?.length ?? 0) > 0 && (
                 <Notice tone="honey">
                   Slop check:{" "}
@@ -256,6 +286,12 @@ export function DraftDetailView({ id }: { id: number }) {
                   id="draft-body"
                   value={body}
                   onChange={(e) => setBody(e.target.value)}
+                  readOnly={streaming}
+                  placeholder={
+                    streaming
+                      ? ""
+                      : "Click Draft to write a reply, or type your own."
+                  }
                   className="absolute inset-0 h-full min-h-0 resize-none overflow-y-auto text-[15px]"
                 />
               </div>
@@ -264,20 +300,17 @@ export function DraftDetailView({ id }: { id: number }) {
 
           <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-line px-6 py-4">
             <Button
-              loading={busy === "approve"}
-              onClick={() =>
-                runAction(
-                  "approve",
-                  () => approveDraft(draft.id, body),
-                  "Ready when you are — post now or schedule.",
-                )
-              }
+              leading={<IconDraft size={16} />}
+              loading={busy === "generate"}
+              disabled={streaming || draft.status === "posted"}
+              onClick={() => void handleGenerate()}
             >
-              Approve
+              {hasBody || draft.body ? "Regenerate" : "Draft"}
             </Button>
             <Button
               variant="danger-soft"
               loading={busy === "reject"}
+              disabled={streaming}
               onClick={() =>
                 runAction("reject", () => rejectDraft(draft.id)).then(() =>
                   router.push("/queue"),
@@ -286,21 +319,12 @@ export function DraftDetailView({ id }: { id: number }) {
             >
               Reject
             </Button>
-            <Button
-              variant="ghost"
-              leading={<IconRefresh size={16} />}
-              loading={busy === "regenerate"}
-              onClick={() =>
-                runAction("regenerate", () => regenerateDraft(draft.id))
-              }
-            >
-              Regenerate
-            </Button>
             <div className="flex-1" />
             {draft.status === "scheduled" ? (
               <Button
                 variant="ghost"
                 loading={busy === "unschedule"}
+                disabled={streaming}
                 onClick={() =>
                   runAction("unschedule", () => unscheduleDraft(draft.id))
                 }
@@ -310,7 +334,7 @@ export function DraftDetailView({ id }: { id: number }) {
             ) : (
               <Button
                 variant="secondary"
-                loading={busy === "schedule-open"}
+                disabled={!canPost || streaming}
                 onClick={() => setScheduleOpen(true)}
               >
                 Schedule
@@ -319,7 +343,7 @@ export function DraftDetailView({ id }: { id: number }) {
             <Button
               variant="secondary"
               loading={busy === "post"}
-              disabled={draft.status === "posted"}
+              disabled={!canPost || streaming}
               onClick={() =>
                 runAction(
                   "post",

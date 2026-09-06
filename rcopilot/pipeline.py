@@ -7,11 +7,17 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from rcopilot import reddit_client
 from rcopilot.config import AppConfig, Account, save_config
-from rcopilot.llm import fallback_search_queries, generate_comment, generate_search_queries
+from rcopilot.llm import (
+    fallback_search_queries,
+    finalize_comment,
+    generate_comment,
+    generate_search_queries,
+    iter_comment_deltas,
+)
 from rcopilot.scoring import apply_scores
 from rcopilot.store import Store
 
@@ -203,7 +209,7 @@ def draft_pending(config: AppConfig, store: Store, account_name: str | None = No
 
 
 def draft_one(config: AppConfig, store: Store, post_id: str, account_name: str | None = None) -> int:
-    """Draft a single post by id (Discover UI)."""
+    """Generate an LLM draft for a single post (CLI / legacy). Prefer queue_post + stream in the UI."""
     store.ensure_schema()
     post = store.get_post(post_id)
     if post is None:
@@ -230,6 +236,69 @@ def draft_one(config: AppConfig, store: Store, post_id: str, account_name: str |
         store.update_draft(draft_id, error=str(exc))
         store.add_audit("draft_error", draft_id=draft_id, post_id=post_id, detail={"error": str(exc)})
         raise
+
+
+def queue_post(config: AppConfig, store: Store, post_id: str, account_name: str | None = None) -> int:
+    """Add a post to the review queue without generating a reply yet."""
+    store.ensure_schema()
+    post = store.get_post(post_id)
+    if post is None:
+        raise ValueError(f"Post not found: {post_id}")
+    if post.get("skipped"):
+        raise ValueError(f"Post {post_id} is skipped")
+    existing = store.connect().execute(
+        "SELECT id FROM drafts WHERE post_id = ?", (post_id,)
+    ).fetchone()
+    if existing:
+        raise ValueError(f"Post {post_id} is already in the review queue")
+
+    account = _resolve_account(config, account_name)
+    draft_id = store.create_draft(post_id, account.name, "", status="pending")
+    store.add_audit("queued", draft_id=draft_id, post_id=post_id)
+    logger.info("Queued post %s as draft %d", post_id, draft_id)
+    return draft_id
+
+
+def iter_draft_deltas(config: AppConfig, store: Store, draft_id: int) -> Iterator[str]:
+    """Stream LLM deltas for a queued draft. Caller must finalize and save."""
+    draft = store.get_draft(draft_id)
+    if draft is None:
+        raise ValueError(f"Draft not found: {draft_id}")
+    if draft["status"] in {"posted", "rejected"}:
+        raise ValueError(f"Draft {draft_id} cannot be generated (status={draft['status']})")
+    if not config.llm.api_key:
+        raise ValueError("Missing LLM_API_KEY in .env (or llm.api_key in config)")
+
+    yield from iter_comment_deltas(
+        config.llm,
+        draft["title"],
+        draft["selftext"],
+        draft.get("top_comments") or [],
+        config.prompt_template,
+        **_voice_kwargs(config),
+    )
+
+
+def finish_draft_stream(
+    config: AppConfig,
+    store: Store,
+    draft_id: int,
+    raw_text: str,
+    *,
+    regenerated: bool = False,
+) -> str:
+    """Lint streamed text, save onto the draft, and return the cleaned body."""
+    draft = store.get_draft(draft_id)
+    if draft is None:
+        raise ValueError(f"Draft not found: {draft_id}")
+    body = finalize_comment(raw_text, product=config.voice.product)
+    store.update_draft(draft_id, body=body, status="pending", error=None)
+    store.add_audit(
+        "regenerated" if regenerated else "drafted",
+        draft_id=draft_id,
+        post_id=draft["post_id"],
+    )
+    return body
 
 
 def skip_post(store: Store, post_id: str) -> None:
@@ -293,17 +362,14 @@ def edit_draft(store: Store, draft_id: int, body: str) -> None:
 
 
 def schedule_draft(store: Store, draft_id: int, run_at: datetime) -> None:
-    """Schedule an approved draft for future posting."""
+    """Schedule a draft with a reply body for future posting."""
     draft = store.get_draft(draft_id)
     if draft is None:
         raise ValueError(f"Draft not found: {draft_id}")
     if draft["status"] not in {"pending", "approved"}:
         raise ValueError(f"Draft {draft_id} cannot be scheduled (status={draft['status']})")
-
-    if draft["status"] == "pending":
-        if not (draft.get("body") or "").strip():
-            raise ValueError(f"Draft {draft_id} has an empty body")
-        store.update_draft(draft_id, status="approved", error=None)
+    if not (draft.get("body") or "").strip():
+        raise ValueError(f"Draft {draft_id} needs a reply before scheduling")
 
     run_at_iso = run_at.astimezone(timezone.utc).replace(microsecond=0).isoformat()
     store.update_draft(draft_id, status="scheduled", run_at=run_at_iso)
@@ -312,7 +378,7 @@ def schedule_draft(store: Store, draft_id: int, run_at: datetime) -> None:
 
 
 def cancel_schedule(store: Store, draft_id: int) -> None:
-    """Cancel a scheduled draft, returning it to approved."""
+    """Cancel a scheduled draft, returning it to pending."""
     draft = store.get_draft(draft_id)
     if draft is None:
         raise ValueError(f"Draft not found: {draft_id}")
@@ -383,23 +449,32 @@ def post_approved(
     store: Store,
     draft_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Post approved drafts to Reddit, enforcing rate limits."""
+    """Post ready drafts to Reddit (pending/approved with a body, or due schedules)."""
     store.ensure_schema()
     now = datetime.now(timezone.utc)
+
+    def _postable(draft: dict[str, Any]) -> bool:
+        if draft["status"] == "scheduled":
+            return _is_due(draft, now)
+        if draft["status"] in {"pending", "approved"}:
+            return bool((draft.get("body") or "").strip())
+        return False
 
     if draft_id is not None:
         draft = store.get_draft(draft_id)
         if draft is None:
             raise ValueError(f"Draft not found: {draft_id}")
-        if draft["status"] == "approved":
-            drafts = [draft]
-        elif draft["status"] == "scheduled" and _is_due(draft, now):
+        if _postable(draft):
             drafts = [draft]
         else:
             logger.warning("Draft %d is not postable (status=%s)", draft_id, draft["status"])
             drafts = []
     else:
-        drafts = store.list_drafts(status="approved")
+        drafts = [
+            item
+            for item in store.list_drafts(status="pending") + store.list_drafts(status="approved")
+            if (item.get("body") or "").strip()
+        ]
 
     results: list[dict[str, Any]] = []
     for draft in drafts:

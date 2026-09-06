@@ -254,6 +254,68 @@ export function draftPost(id: string): Promise<Draft> {
   return request<Draft>(`/api/posts/${id}/draft`, { method: "POST" });
 }
 
+export function queuePost(id: string): Promise<Draft> {
+  return request<Draft>(`/api/posts/${id}/queue`, { method: "POST" });
+}
+
+export async function streamDraftGenerate(
+  id: number,
+  onDelta: (delta: string) => void,
+): Promise<Draft> {
+  const res = await fetch(`/api/drafts/${id}/generate`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { Accept: "text/event-stream" },
+  });
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try {
+      const data = (await res.json()) as { error?: string; detail?: string };
+      if (data.error) message = data.error;
+      else if (typeof data.detail === "string") message = data.detail;
+    } catch {
+      // ignore
+    }
+    throw new ApiError(message, res.status);
+  }
+  if (!res.body) {
+    throw new ApiError("No stream from API", res.status || 500);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let draft: Draft | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const line = chunk
+        .split("\n")
+        .find((entry) => entry.startsWith("data: "));
+      if (!line) continue;
+      const payload = JSON.parse(line.slice(6)) as {
+        delta?: string;
+        done?: boolean;
+        draft?: Draft;
+        error?: string;
+      };
+      if (payload.error) throw new ApiError(payload.error, 400);
+      if (payload.delta) onDelta(payload.delta);
+      if (payload.done && payload.draft) draft = payload.draft;
+    }
+  }
+
+  if (!draft) {
+    throw new ApiError("Stream ended without a draft", 500);
+  }
+  return draft;
+}
+
 export function skipPost(id: string): Promise<Post> {
   return request<Post>(`/api/posts/${id}/skip`, { method: "POST" });
 }

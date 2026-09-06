@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 from rcopilot import __version__
@@ -38,7 +39,10 @@ from rcopilot.pipeline import (
     draft_pending,
     edit_draft,
     fetch_and_store,
+    finish_draft_stream,
+    iter_draft_deltas,
     post_approved,
+    queue_post,
     regenerate_draft,
     reject_draft,
     run_once,
@@ -272,6 +276,53 @@ def create_app(config_path: str | None = None) -> FastAPI:
         draft = store.get_draft(draft_id)
         return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
 
+    @app.post("/api/drafts/{draft_id}/generate")
+    def generate_stream(draft_id: int) -> StreamingResponse:
+        """Stream an LLM reply into a queued draft (SSE)."""
+        config = get_config()
+        store = get_store(config)
+        draft = store.get_draft(draft_id)
+        if draft is None:
+            raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+        regenerated = bool((draft.get("body") or "").strip())
+
+        def event_stream() -> Iterator[str]:
+            parts: list[str] = []
+            try:
+                for delta in iter_draft_deltas(config, store, draft_id):
+                    parts.append(delta)
+                    yield f"data: {json.dumps({'delta': delta})}\n\n"
+                body = finish_draft_stream(
+                    config,
+                    store,
+                    draft_id,
+                    "".join(parts),
+                    regenerated=regenerated,
+                )
+                payload = _serialize_draft(
+                    store.get_draft(draft_id) or {"body": body},
+                    product=config.voice.product,
+                )
+                payload["body"] = body
+                yield f"data: {json.dumps({'done': True, 'draft': payload})}\n\n"
+            except Exception as exc:
+                logger.exception("Streaming draft failed for %s: %s", draft_id, exc)
+                try:
+                    store.update_draft(draft_id, status="error", error=str(exc))
+                except Exception:
+                    pass
+                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @app.post("/api/drafts/{draft_id}/post")
     def post_draft(draft_id: int) -> dict[str, Any]:
         config = get_config()
@@ -281,7 +332,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if not results:
-            raise HTTPException(status_code=400, detail="Draft is not approved or not due")
+            raise HTTPException(
+                status_code=400,
+                detail="Draft needs a reply body before posting, or it is not due yet",
+            )
         result = results[0]
         if not result.get("ok"):
             if result.get("skipped"):
@@ -329,8 +383,20 @@ def create_app(config_path: str | None = None) -> FastAPI:
         )
         return {"posts": [_serialize_post(p) for p in posts]}
 
+    @app.post("/api/posts/{post_id}/queue")
+    def queue_post_route(post_id: str) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            draft_id = queue_post(config, store, post_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
+
     @app.post("/api/posts/{post_id}/draft")
     def draft_post(post_id: str) -> dict[str, Any]:
+        """Legacy: generate a full draft immediately. Prefer /queue + /generate."""
         config = get_config()
         store = get_store(config)
         try:

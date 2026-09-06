@@ -32,7 +32,9 @@ export function DraftCard({ draft }: { draft: Draft }) {
           <Pill status={draft.status} />
         </div>
         <p className="text-[14px] text-ink-2 leading-relaxed line-clamp-2">
-          {truncate(draft.body, 180)}
+          {draft.body.trim()
+            ? truncate(draft.body, 180)
+            : "No reply yet — open and click Draft."}
         </p>
         <p className="mt-3 text-[12px] text-ink-3">
           {formatRelativeTime(draft.updated_at)}
@@ -44,7 +46,6 @@ export function DraftCard({ draft }: { draft: Draft }) {
 
 export const FILTER_STATUSES: DraftStatus[] = [
   "pending",
-  "approved",
   "scheduled",
   "posted",
   "error",

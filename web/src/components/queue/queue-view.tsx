@@ -50,7 +50,8 @@ export function QueueView() {
           Review queue
         </h1>
         <p className="mt-0.5 text-[13px] text-ink-3">
-          Nothing posts until you approve it.
+          Draft a reply, edit it, then post or schedule. Reject anything that
+          doesn’t fit.
         </p>
       </header>
 
@@ -69,7 +70,7 @@ export function QueueView() {
             <AsciiAccent className="mb-4" />
             <Mascot mood="neutral" className="mb-4" />
             <p className="max-w-sm text-[15px] text-ink-2 leading-relaxed">
-              Nothing to review yet. Fetch and draft threads in Discover.
+              Nothing to review yet. Add threads from Discover.
             </p>
           </div>
         ) : (

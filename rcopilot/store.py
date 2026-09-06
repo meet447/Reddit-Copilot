@@ -338,7 +338,7 @@ class Store:
             raise ValueError(f"Draft not found: {draft_id}")
         if draft["status"] != "scheduled":
             raise ValueError(f"Draft {draft_id} is not scheduled (status={draft['status']})")
-        self.update_draft(draft_id, status="approved", run_at=None)
+        self.update_draft(draft_id, status="pending", run_at=None)
 
     def add_audit(
         self,

@@ -15,6 +15,10 @@ from rcopilot.config import write_example_config
 def client(tmp_path: Path) -> TestClient:
     config_path = tmp_path / "config.yaml"
     write_example_config(config_path)
+    # Keep the DB inside tmp_path — example config uses a relative rcopilot.db.
+    text = config_path.read_text(encoding="utf-8")
+    text = text.replace("db_path: rcopilot.db", f"db_path: {tmp_path / 'test.db'}")
+    config_path.write_text(text, encoding="utf-8")
     (tmp_path / ".env").write_text("LLM_API_KEY=test-key\n", encoding="utf-8")
     app = create_app(config_path=str(config_path))
     return TestClient(app)

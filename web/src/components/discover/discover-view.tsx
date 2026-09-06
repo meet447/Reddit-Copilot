@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   getPosts,
-  draftPost,
+  queuePost,
   skipPost,
   fetchThreads,
   ApiError,
@@ -14,7 +14,7 @@ import { ApiDownNotice, Notice } from "@/components/ui/notice";
 import { Mascot } from "@/components/ui/mascot";
 import { AsciiAccent } from "@/components/ui/ascii-accent";
 import { Surface } from "@/components/ui/surface";
-import { IconDraft, IconSkip, IconRefresh } from "@/components/ui/icons";
+import { IconPlus, IconSkip, IconRefresh } from "@/components/ui/icons";
 import { Input, Field, Label } from "@/components/ui/field";
 
 export function DiscoverView() {
@@ -81,13 +81,22 @@ export function DiscoverView() {
     }
   }
 
-  async function handleDraft(postId: string) {
+  async function handleAdd(postId: string) {
     setBusyId(postId);
+    setActionError(null);
+    setMessage(null);
     try {
-      await draftPost(postId);
+      await queuePost(postId);
       setPosts((prev) => prev.filter((p) => p.id !== postId));
-    } catch {
-      setApiDown(true);
+      setApiDown(false);
+      setMessage("Added to the review queue.");
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setActionError(error.message);
+        setApiDown(false);
+      } else {
+        setApiDown(true);
+      }
     } finally {
       setBusyId(null);
     }
@@ -95,11 +104,18 @@ export function DiscoverView() {
 
   async function handleSkip(postId: string) {
     setBusyId(postId);
+    setActionError(null);
     try {
       await skipPost(postId);
       setPosts((prev) => prev.filter((p) => p.id !== postId));
-    } catch {
-      setApiDown(true);
+      setApiDown(false);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setActionError(error.message);
+        setApiDown(false);
+      } else {
+        setApiDown(true);
+      }
     } finally {
       setBusyId(null);
     }
@@ -113,7 +129,7 @@ export function DiscoverView() {
             Discover
           </h1>
           <p className="mt-0.5 text-[13px] text-ink-3">
-            Intent-matched threads waiting for a draft.
+            Pick threads to review. Draft replies in the queue.
           </p>
         </div>
         <Button
@@ -201,11 +217,11 @@ export function DiscoverView() {
                   <div className="flex shrink-0 flex-col gap-2">
                     <Button
                       size="sm"
-                      leading={<IconDraft size={14} />}
+                      leading={<IconPlus size={14} />}
                       loading={busyId === post.id}
-                      onClick={() => handleDraft(post.id)}
+                      onClick={() => handleAdd(post.id)}
                     >
-                      Draft
+                      Add
                     </Button>
                     <Button
                       size="sm"
