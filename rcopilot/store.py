@@ -111,6 +111,11 @@ class Store:
         self._add_column_if_missing(conn, "posts", "keywords_matched", "TEXT DEFAULT '[]'")
         self._add_column_if_missing(conn, "posts", "intent_labels", "TEXT DEFAULT '[]'")
         self._add_column_if_missing(conn, "drafts", "run_at", "TEXT")
+        self._add_column_if_missing(conn, "drafts", "comment_id", "TEXT")
+        self._add_column_if_missing(conn, "drafts", "outcome_score", "INTEGER")
+        self._add_column_if_missing(conn, "drafts", "outcome_replies", "INTEGER")
+        self._add_column_if_missing(conn, "drafts", "outcome_removed", "INTEGER DEFAULT 0")
+        self._add_column_if_missing(conn, "drafts", "outcomes_polled_at", "TEXT")
 
         conn.commit()
         logger.debug("Ensured schema at %s", self.db_path)
@@ -245,7 +250,20 @@ class Store:
         if not fields:
             return
 
-        allowed = {"post_id", "account_name", "body", "status", "error", "permalink", "run_at"}
+        allowed = {
+            "post_id",
+            "account_name",
+            "body",
+            "status",
+            "error",
+            "permalink",
+            "run_at",
+            "comment_id",
+            "outcome_score",
+            "outcome_replies",
+            "outcome_removed",
+            "outcomes_polled_at",
+        }
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown draft fields: {', '.join(sorted(unknown))}")
@@ -302,6 +320,25 @@ class Store:
                 base_query + " WHERE d.status = ? ORDER BY d.created_at DESC",
                 (status,),
             ).fetchall()
+        return [self._row_draft(row) for row in rows]
+
+    def list_posted_for_outcomes(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Posted drafts needing outcome poll, oldest poll first (never-polled first)."""
+        conn = self.connect()
+        rows = conn.execute(
+            """
+            SELECT d.*,
+                   p.subreddit, p.title, p.selftext, p.url,
+                   p.permalink AS post_permalink, p.created_utc, p.top_comments,
+                   p.relevance_score, p.score_reasons
+            FROM drafts d
+            JOIN posts p ON p.id = d.post_id
+            WHERE d.status = 'posted'
+            ORDER BY (d.outcomes_polled_at IS NULL) DESC, d.outcomes_polled_at ASC, d.id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
         return [self._row_draft(row) for row in rows]
 
     def list_scheduled_due(self, now_iso: str) -> list[dict[str, Any]]:
@@ -464,4 +501,5 @@ class Store:
         if isinstance(raw_comments, str):
             data["top_comments"] = json.loads(raw_comments)
         data["score_reasons"] = Store._parse_json_list(data.get("score_reasons"))
+        data["outcome_removed"] = bool(data.get("outcome_removed", 0))
         return data

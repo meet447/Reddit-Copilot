@@ -16,7 +16,13 @@ from rcopilot.config import (
     VoiceConfig,
     WorkerConfig,
 )
-from rcopilot.pipeline import approve_draft, cancel_schedule, reject_draft, schedule_draft
+from rcopilot.pipeline import (
+    approve_draft,
+    cancel_schedule,
+    poll_outcomes,
+    reject_draft,
+    schedule_draft,
+)
 from rcopilot.store import Store
 
 
@@ -26,7 +32,15 @@ def _config() -> AppConfig:
         listing="hot",
         fetch_limit=25,
         db_path="unused.db",
-        accounts=[Account(name="default", user_agent="test/1.0")],
+        accounts=[
+            Account(
+                name="default",
+                user_agent="test/1.0",
+                client_id="cid",
+                client_secret="secret",
+                refresh_token="token",
+            )
+        ],
         llm=LLMConfig(base_url="https://example.com/v1", model="test"),
         rate_limits=RateLimits(),
         voice=VoiceConfig(),
@@ -94,3 +108,51 @@ def test_approve_requires_body(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="empty body"):
         approve_draft(store, draft_id)
+
+
+def test_poll_outcomes_updates_draft(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = Store(tmp_path / "pipeline.db")
+    store.ensure_schema()
+    draft_id = _seed_draft(store, status="posted")
+    store.update_draft(
+        draft_id,
+        permalink="https://www.reddit.com/r/python/comments/p1/slug/cmt99/",
+    )
+
+    monkeypatch.setattr(
+        "rcopilot.reddit_client.get_reddit",
+        lambda account: object(),
+    )
+    monkeypatch.setattr(
+        "rcopilot.reddit_client.fetch_comment_outcome",
+        lambda reddit, comment_id: {
+            "score": 7,
+            "replies": 2,
+            "removed": False,
+            "permalink": "https://www.reddit.com/r/python/comments/p1/slug/cmt99/",
+        },
+    )
+
+    assert poll_outcomes(_config(), store) == 1
+    draft = store.get_draft(draft_id)
+    assert draft is not None
+    assert draft["comment_id"] == "cmt99"
+    assert draft["outcome_score"] == 7
+    assert draft["outcome_replies"] == 2
+    assert draft["outcome_removed"] is False
+    assert draft["outcomes_polled_at"]
+
+    events = store.list_audit(limit=10)
+    assert any(e["action"] == "outcome_updated" for e in events)
+
+
+def test_poll_outcomes_skips_without_id_or_permalink(tmp_path: Path) -> None:
+    store = Store(tmp_path / "pipeline.db")
+    store.ensure_schema()
+    draft_id = _seed_draft(store, status="posted")
+    store.update_draft(draft_id, permalink=None, comment_id=None)
+
+    assert poll_outcomes(_config(), store) == 0
+    draft = store.get_draft(draft_id)
+    assert draft is not None
+    assert draft["outcomes_polled_at"] is None

@@ -36,6 +36,13 @@ export function DraftCard({ draft }: { draft: Draft }) {
             ? truncate(draft.body, 180)
             : "No reply yet — open and click Draft."}
         </p>
+        {draft.status === "posted" && draft.outcomes_polled_at && (
+          <p className="mt-2 text-[12px] text-ink-3">
+            {draft.outcome_removed
+              ? "Removed on Reddit"
+              : `${draft.outcome_score ?? "—"} pts · ${draft.outcome_replies ?? 0} ${(draft.outcome_replies ?? 0) === 1 ? "reply" : "replies"}`}
+          </p>
+        )}
         <p className="mt-3 text-[12px] text-ink-3">
           {formatRelativeTime(draft.updated_at)}
         </p>

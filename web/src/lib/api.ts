@@ -31,6 +31,11 @@ export interface Draft {
   top_comments: TopComment[];
   relevance_score: number;
   score_reasons: string[];
+  comment_id?: string | null;
+  outcome_score?: number | null;
+  outcome_replies?: number | null;
+  outcome_removed?: boolean;
+  outcomes_polled_at?: string | null;
   lint_warnings?: { code: string; message: string }[];
 }
 
@@ -335,8 +340,15 @@ export function runOnce(): Promise<{
   fetched: number;
   drafted: number;
   posted: number;
+  outcomes?: number;
 }> {
   return request("/api/actions/run-once", { method: "POST" });
+}
+
+export function pollOutcomes(): Promise<{ outcomes: number }> {
+  return request<{ outcomes: number }>("/api/actions/poll-outcomes", {
+    method: "POST",
+  });
 }
 
 export async function getSchedule(): Promise<Draft[]> {

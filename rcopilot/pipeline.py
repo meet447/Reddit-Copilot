@@ -432,16 +432,110 @@ def _post_draft(config: AppConfig, store: Store, draft: dict[str, Any]) -> dict[
 
     reddit = reddit_client.get_reddit(account)
     try:
-        permalink = reddit_client.post_comment(reddit, draft["post_id"], draft["body"])
-        store.update_draft(draft["id"], status="posted", permalink=permalink, error=None, run_at=None)
-        store.add_audit("posted", draft_id=draft["id"], post_id=draft["post_id"], detail={"permalink": permalink})
+        permalink, comment_id = reddit_client.post_comment(
+            reddit, draft["post_id"], draft["body"]
+        )
+        store.update_draft(
+            draft["id"],
+            status="posted",
+            permalink=permalink,
+            comment_id=comment_id,
+            error=None,
+            run_at=None,
+        )
+        store.add_audit(
+            "posted",
+            draft_id=draft["id"],
+            post_id=draft["post_id"],
+            detail={"permalink": permalink, "comment_id": comment_id},
+        )
         logger.info("Posted draft %d -> %s", draft["id"], permalink)
-        return {"draft_id": draft["id"], "ok": True, "permalink": permalink}
+        return {
+            "draft_id": draft["id"],
+            "ok": True,
+            "permalink": permalink,
+            "comment_id": comment_id,
+        }
     except Exception as exc:
         logger.exception("Failed to post draft %d: %s", draft["id"], exc)
         store.update_draft(draft["id"], status="error", error=str(exc))
         store.add_audit("post_error", draft_id=draft["id"], post_id=draft["post_id"], detail={"error": str(exc)})
         return {"draft_id": draft["id"], "ok": False, "error": str(exc)}
+
+
+def poll_outcomes(config: AppConfig, store: Store, *, limit: int = 20) -> int:
+    """Refresh score / replies / removed for posted comments. Returns polls attempted."""
+    store.ensure_schema()
+    drafts = store.list_posted_for_outcomes(limit=limit)
+    if not drafts:
+        return 0
+
+    accounts_by_name = {account.name: account for account in config.accounts}
+    polled = 0
+
+    for draft in drafts:
+        account = accounts_by_name.get(draft["account_name"])
+        if account is None:
+            logger.warning(
+                "Skipping outcome poll for draft %s: unknown account %s",
+                draft["id"],
+                draft["account_name"],
+            )
+            continue
+
+        comment_id = draft.get("comment_id") or reddit_client.comment_id_from_permalink(
+            draft.get("permalink")
+        )
+        if not comment_id:
+            logger.debug("Draft %s has no comment_id/permalink for outcome poll", draft["id"])
+            continue
+
+        try:
+            reddit = reddit_client.get_reddit(account)
+            outcome = reddit_client.fetch_comment_outcome(reddit, comment_id)
+        except Exception as exc:
+            logger.warning("Outcome poll failed for draft %s: %s", draft["id"], exc)
+            continue
+
+        new_removed = bool(outcome.get("removed"))
+        old_score = draft.get("outcome_score")
+        old_replies = draft.get("outcome_replies")
+        old_removed = bool(draft.get("outcome_removed"))
+        new_score = outcome.get("score")
+        new_replies = int(outcome.get("replies") or 0)
+
+        changed = (
+            old_score != new_score
+            or old_replies != new_replies
+            or old_removed != new_removed
+        )
+
+        fields: dict[str, Any] = {
+            "comment_id": comment_id,
+            "outcome_score": new_score,
+            "outcome_replies": new_replies,
+            "outcome_removed": 1 if new_removed else 0,
+            "outcomes_polled_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        }
+        if outcome.get("permalink") and not draft.get("permalink"):
+            fields["permalink"] = outcome["permalink"]
+
+        store.update_draft(draft["id"], **fields)
+        polled += 1
+
+        if changed:
+            store.add_audit(
+                "outcome_updated",
+                draft_id=draft["id"],
+                post_id=draft["post_id"],
+                detail={
+                    "score": new_score,
+                    "replies": new_replies,
+                    "removed": new_removed,
+                },
+            )
+
+    return polled
 
 
 def post_approved(
@@ -504,12 +598,18 @@ def run_once(
     *,
     config_path: str | Path | None = None,
 ) -> dict[str, int]:
-    """Run one worker cycle: fetch, draft eligible posts, post due schedules."""
+    """Run one worker cycle: fetch, draft eligible posts, post due schedules, poll outcomes."""
     fetched = fetch_and_store(config, store, config_path=config_path)
     drafted = draft_pending(config, store)
     scheduled_results = post_due_scheduled(config, store)
     posted = sum(1 for item in scheduled_results if item.get("ok"))
-    return {"fetched": fetched, "drafted": drafted, "posted": posted}
+    outcomes = poll_outcomes(config, store)
+    return {
+        "fetched": fetched,
+        "drafted": drafted,
+        "posted": posted,
+        "outcomes": outcomes,
+    }
 
 
 def rescore_posts(store: Store, config: AppConfig) -> int:

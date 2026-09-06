@@ -122,6 +122,49 @@ def test_audit_events(tmp_path: Path) -> None:
     assert events[0]["detail"] == {"by": "test"}
 
 
+def test_draft_outcome_columns_and_list_for_poll(tmp_path: Path) -> None:
+    store = Store(tmp_path / "test.db")
+    store.ensure_schema()
+    _sample_post(store, post_id="a")
+    _sample_post(store, post_id="b")
+    _sample_post(store, post_id="c")
+    id_a = store.create_draft("a", "default", "one")
+    id_b = store.create_draft("b", "default", "two")
+    id_c = store.create_draft("c", "default", "three")
+
+    store.update_draft(id_a, status="posted", comment_id="cmt_a", permalink="https://reddit.com/r/x/comments/a/slug/cmt_a")
+    store.update_draft(
+        id_b,
+        status="posted",
+        comment_id="cmt_b",
+        outcome_score=3,
+        outcome_replies=1,
+        outcome_removed=0,
+        outcomes_polled_at="2026-01-01T00:00:00+00:00",
+    )
+    store.update_draft(id_c, status="pending")
+
+    store.update_draft(
+        id_a,
+        outcome_score=12,
+        outcome_replies=2,
+        outcome_removed=0,
+        outcomes_polled_at="2026-01-02T00:00:00+00:00",
+    )
+    draft = store.get_draft(id_a)
+    assert draft is not None
+    assert draft["comment_id"] == "cmt_a"
+    assert draft["outcome_score"] == 12
+    assert draft["outcome_replies"] == 2
+    assert draft["outcome_removed"] is False
+    assert draft["outcomes_polled_at"] == "2026-01-02T00:00:00+00:00"
+
+    # Never-polled posted draft should come first
+    store.update_draft(id_a, outcomes_polled_at=None, outcome_score=None, outcome_replies=None)
+    ordered = store.list_posted_for_outcomes(limit=10)
+    assert [d["id"] for d in ordered] == [id_a, id_b]
+
+
 def test_count_drafts_by_status(tmp_path: Path) -> None:
     store = Store(tmp_path / "test.db")
     store.ensure_schema()

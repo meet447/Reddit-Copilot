@@ -32,6 +32,7 @@ import { Surface } from "@/components/ui/surface";
 import { Kbd, KeyCombo } from "@/components/ui/kbd";
 import { Dots } from "@/components/ui/dots";
 import { Mascot } from "@/components/ui/mascot";
+import { PostedDetailView } from "@/components/draft/posted-detail-view";
 
 export function DraftDetailView({ id }: { id: number }) {
   const router = useRouter();
@@ -115,7 +116,7 @@ export function DraftDetailView({ id }: { id: number }) {
   }
 
   async function handleGenerate() {
-    if (!draft || streaming) return;
+    if (!draft || streaming || draft.status === "posted") return;
     const wasRegen = Boolean(draft.body.trim() || body.trim());
     setStreaming(true);
     setBusy("generate");
@@ -148,6 +149,7 @@ export function DraftDetailView({ id }: { id: number }) {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (draft?.status === "posted") return;
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
@@ -205,6 +207,18 @@ export function DraftDetailView({ id }: { id: number }) {
           <Button variant="secondary">Back to queue</Button>
         </Link>
       </div>
+    );
+  }
+
+  if (draft.status === "posted") {
+    return (
+      <PostedDetailView
+        draft={draft}
+        onDraftChange={(updated) => {
+          setDraft(updated);
+          setBody(updated.body);
+        }}
+      />
     );
   }
 

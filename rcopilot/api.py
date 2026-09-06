@@ -41,6 +41,7 @@ from rcopilot.pipeline import (
     fetch_and_store,
     finish_draft_stream,
     iter_draft_deltas,
+    poll_outcomes,
     post_approved,
     queue_post,
     regenerate_draft,
@@ -73,6 +74,11 @@ DRAFT_API_FIELDS = (
     "top_comments",
     "relevance_score",
     "score_reasons",
+    "comment_id",
+    "outcome_score",
+    "outcome_replies",
+    "outcome_removed",
+    "outcomes_polled_at",
 )
 
 
@@ -455,6 +461,16 @@ def create_app(config_path: str | None = None) -> FastAPI:
             return run_once(config, store, config_path=resolved_path)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/actions/poll-outcomes")
+    def action_poll_outcomes() -> dict[str, int]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            outcomes = poll_outcomes(config, store)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"outcomes": outcomes}
 
     @app.get("/api/schedule")
     def get_schedule() -> dict[str, Any]:

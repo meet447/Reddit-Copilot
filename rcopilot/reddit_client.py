@@ -15,6 +15,68 @@ logger = logging.getLogger(__name__)
 OAUTH_SCOPES = ["identity", "read", "submit"]
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:8000/api/oauth/callback"
 
+# Reddit comment permalinks: /r/sub/comments/POSTID/slug/COMMENTID/
+_REMOVED_BODIES = frozenset({None, "[removed]", "[deleted]"})
+
+
+def comment_id_from_permalink(url: str | None) -> str | None:
+    """Extract a Reddit comment id from a comment permalink, if present."""
+    if not url:
+        return None
+    parts = [p for p in url.split("?")[0].rstrip("/").split("/") if p]
+    try:
+        idx = next(i for i, part in enumerate(parts) if part.lower() == "comments")
+    except StopIteration:
+        return None
+    after = parts[idx + 1 :]
+    # Thread: /comments/POSTID/slug — comment: /comments/POSTID/slug/COMMENTID
+    if len(after) >= 3:
+        return after[2]
+    return None
+
+
+def fetch_comment_outcome(reddit: praw.Reddit, comment_id: str) -> dict[str, Any]:
+    """Fetch score / reply count / removed state for a posted comment."""
+    bare_id = comment_id.removeprefix("t1_")
+    try:
+        comment = reddit.comment(id=bare_id)
+        comment.refresh()
+    except Exception as exc:
+        logger.warning("Could not fetch comment %s: %s", bare_id, exc)
+        return {
+            "score": None,
+            "replies": 0,
+            "removed": True,
+            "permalink": None,
+        }
+
+    body = getattr(comment, "body", None)
+    removed = body in _REMOVED_BODIES
+
+    replies = 0
+    try:
+        comment.replies.replace_more(limit=0)
+        replies = len(list(comment.replies))
+    except Exception:
+        replies = int(getattr(comment, "num_replies", 0) or 0)
+
+    permalink = getattr(comment, "permalink", None)
+    if permalink and not str(permalink).startswith("http"):
+        permalink = f"https://www.reddit.com{permalink}"
+
+    score = getattr(comment, "score", None)
+    try:
+        score = int(score) if score is not None else None
+    except (TypeError, ValueError):
+        score = None
+
+    return {
+        "score": score,
+        "replies": replies,
+        "removed": removed,
+        "permalink": permalink,
+    }
+
 
 def _base_kwargs(account: Account) -> dict[str, str]:
     if not account.client_id:
@@ -167,8 +229,8 @@ def search_posts(
     return posts
 
 
-def post_comment(reddit: praw.Reddit, post_id: str, body: str) -> str:
-    """Post *body* as a comment on *post_id*; return the comment permalink."""
+def post_comment(reddit: praw.Reddit, post_id: str, body: str) -> tuple[str, str | None]:
+    """Post *body* as a comment on *post_id*; return (permalink, comment_id)."""
     if not body.strip():
         raise ValueError("Comment body must not be empty")
 
@@ -185,11 +247,15 @@ def post_comment(reddit: praw.Reddit, post_id: str, body: str) -> str:
                 raise RuntimeError(f"Thread is locked and cannot be commented on: {message}") from exc
         raise
 
+    comment_id = getattr(comment, "id", None)
     permalink = getattr(comment, "permalink", None)
     if permalink:
-        if permalink.startswith("http"):
-            return permalink
-        return f"https://www.reddit.com{permalink}"
+        if not str(permalink).startswith("http"):
+            permalink = f"https://www.reddit.com{permalink}"
+        return str(permalink), str(comment_id) if comment_id else None
 
     logger.warning("Comment posted but permalink unavailable for post %s", post_id)
-    return submission.permalink
+    fallback = getattr(submission, "permalink", None) or ""
+    if fallback and not str(fallback).startswith("http"):
+        fallback = f"https://www.reddit.com{fallback}"
+    return str(fallback), str(comment_id) if comment_id else None
