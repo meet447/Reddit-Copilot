@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getConfig,
@@ -8,6 +8,7 @@ import {
   putSecrets,
   startOAuth,
   fetchThreads,
+  suggestSubreddits,
   type AppConfig,
   type ConfigUpdate,
 } from "@/lib/api";
@@ -16,16 +17,20 @@ import { Button } from "@/components/ui/button";
 import { MeuxeMark, Mascot } from "@/components/ui/mascot";
 import { Field, Label, Input, Textarea, Hint } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
+import { TagInput } from "@/components/ui/tag-input";
+import { IconRefresh } from "@/components/ui/icons";
 
 const STEPS = [
   {
     title: "Create a Reddit app",
-    subtitle: "A web app at reddit.com/prefs/apps. You’ll only paste the client id and secret.",
+    subtitle:
+      "A web app at reddit.com/prefs/apps. You’ll only paste the client id and secret.",
     mood: "neutral" as const,
   },
   {
     title: "Connect Reddit",
-    subtitle: "Sign in with Reddit in the browser. We store a refresh token locally — not your password.",
+    subtitle:
+      "Sign in with Reddit in the browser. We store a refresh token locally — not your password.",
     mood: "thinking" as const,
   },
   {
@@ -34,23 +39,17 @@ const STEPS = [
     mood: "happy" as const,
   },
   {
-    title: "Pick subreddits & keywords",
-    subtitle: "Where to look and what signals matter.",
-    mood: "surprised" as const,
-  },
-  {
     title: "Connect your LLM",
-    subtitle: "OpenAI-compatible API for drafting replies.",
+    subtitle: "OpenAI-compatible API — used for drafts and subreddit suggestions.",
     mood: "sleepy" as const,
   },
+  {
+    title: "Pick your communities",
+    subtitle:
+      "We’ll suggest subreddits from your voice. Add or remove until it feels right.",
+    mood: "surprised" as const,
+  },
 ];
-
-function splitCsv(value: string): string[] {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
 
 function clampStep(value: number | undefined): number {
   if (!Number.isFinite(value)) return 0;
@@ -65,20 +64,22 @@ export function OnboardingFlow() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [connectedName, setConnectedName] = useState("");
   const [hasClientId, setHasClientId] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [redirectUri, setRedirectUri] = useState(
     "http://127.0.0.1:8000/api/oauth/callback",
   );
+  const suggestedOnce = useRef(false);
 
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [productDesc, setProductDesc] = useState("");
   const [tone, setTone] = useState("");
   const [persona, setPersona] = useState("");
-  const [subreddits, setSubreddits] = useState("");
-  const [keywords, setKeywords] = useState("");
+  const [subreddits, setSubreddits] = useState<string[]>([]);
+  const [keywords, setKeywords] = useState<string[]>([]);
   const [llmModel, setLlmModel] = useState("gpt-4o-mini");
   const [llmBaseUrl, setLlmBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -96,8 +97,8 @@ export function OnboardingFlow() {
     setProductDesc(config.voice?.product ?? "");
     setTone(config.voice?.tone ?? "");
     setPersona(config.voice?.persona ?? "");
-    setSubreddits((config.subreddits ?? []).join(", "));
-    setKeywords((config.discovery?.keywords ?? []).join(", "));
+    setSubreddits(config.subreddits ?? []);
+    setKeywords(config.discovery?.keywords ?? []);
     if (config.llm?.model) setLlmModel(config.llm.model);
     setLlmBaseUrl(config.llm?.base_url ?? "");
   }
@@ -105,14 +106,14 @@ export function OnboardingFlow() {
   async function persist(nextStep: number, extra?: ConfigUpdate) {
     await putConfig({
       onboarding_step: nextStep,
-      subreddits: splitCsv(subreddits),
+      subreddits,
       voice: {
         product: productDesc,
         tone,
         persona,
       },
       discovery: {
-        keywords: splitCsv(keywords),
+        keywords,
       },
       llm: {
         model: llmModel,
@@ -120,6 +121,34 @@ export function OnboardingFlow() {
       },
       ...extra,
     });
+  }
+
+  async function runSuggest(force = false) {
+    if (!productDesc.trim()) {
+      setError("Describe what you make first, then we can suggest communities.");
+      return;
+    }
+    if (!force && subreddits.length > 0) return;
+    setSuggesting(true);
+    setError(null);
+    try {
+      const data = await suggestSubreddits({
+        product: productDesc,
+        tone,
+        persona,
+        count: 12,
+      });
+      setSubreddits(data.subreddits ?? []);
+      suggestedOnce.current = true;
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Could not suggest subreddits. Add some manually.",
+      );
+    } finally {
+      setSuggesting(false);
+    }
   }
 
   useEffect(() => {
@@ -130,6 +159,14 @@ export function OnboardingFlow() {
         applyConfig(config);
         const reddit = searchParams.get("reddit");
         let nextStep = clampStep(config.onboarding_step);
+        // Migrate older saves that stored "subreddits" as step 3 before LLM swap.
+        if (
+          nextStep === 3 &&
+          !(config.subreddits?.length) &&
+          !config.has_api_key
+        ) {
+          nextStep = 3; // LLM step in new order
+        }
         if (reddit === "connected" || reddit === "error") {
           nextStep = Math.max(nextStep, 1);
         }
@@ -157,7 +194,6 @@ export function OnboardingFlow() {
       void persist(step);
     }, 500);
     return () => window.clearTimeout(timer);
-    // persist reads the latest field state from this render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     ready,
@@ -170,6 +206,13 @@ export function OnboardingFlow() {
     llmModel,
     llmBaseUrl,
   ]);
+
+  useEffect(() => {
+    if (!ready || step !== 4) return;
+    if (suggestedOnce.current || subreddits.length > 0) return;
+    void runSuggest(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, step]);
 
   async function saveSecretsIfPresent() {
     const secrets: {
@@ -223,6 +266,18 @@ export function OnboardingFlow() {
     }
     if (step === 1 && !connectedName) {
       setError("Connect Reddit before continuing.");
+      return;
+    }
+    if (step === 2 && !productDesc.trim()) {
+      setError("Say a bit about what you make so we can suggest communities.");
+      return;
+    }
+    if (step === 3 && !hasApiKey && !apiKey.trim()) {
+      setError("Add an LLM API key so we can draft and suggest subreddits.");
+      return;
+    }
+    if (step === 4 && subreddits.length === 0) {
+      setError("Add at least one subreddit to continue.");
       return;
     }
     setLoading(true);
@@ -300,17 +355,17 @@ export function OnboardingFlow() {
       <main className="flex flex-1 flex-col items-center justify-center px-6 pb-24">
         <div className="w-full max-w-[560px] text-center motion-safe:animate-rise-in">
           <Mascot mood={current.mood} className="mx-auto mb-6" size={96} />
-          <p className="text-[13px] text-ink-3 mb-2">
+          <p className="mb-2 text-[13px] text-ink-3">
             Step {step + 1} of {STEPS.length}
           </p>
-          <h1 className="text-[24px] font-semibold text-ink tracking-tight">
+          <h1 className="text-[24px] font-semibold tracking-tight text-ink">
             {current.title}
           </h1>
-          <p className="mt-2 text-[15px] text-ink-2 leading-relaxed">
+          <p className="mt-2 text-[15px] leading-relaxed text-ink-2">
             {current.subtitle}
           </p>
 
-          <div className="mt-8 text-left space-y-4">
+          <div className="mt-8 space-y-4 text-left">
             {error && <Notice tone="clay">{error}</Notice>}
 
             {step === 0 && (
@@ -341,11 +396,13 @@ export function OnboardingFlow() {
                     type="password"
                     value={clientSecret}
                     onChange={(e) => setClientSecret(e.target.value)}
-                    placeholder={hasClientId ? "Leave blank to keep current" : undefined}
+                    placeholder={
+                      hasClientId ? "Leave blank to keep current" : undefined
+                    }
                   />
                   <Hint>Create a web app. Redirect URI must match exactly:</Hint>
                 </Field>
-                <p className="rounded-field bg-well px-3 py-2 font-mono text-[12px] text-ink-2 break-all">
+                <p className="break-all rounded-field bg-well px-3 py-2 font-mono text-[12px] text-ink-2">
                   {redirectUri}
                 </p>
               </>
@@ -405,30 +462,6 @@ export function OnboardingFlow() {
 
             {step === 3 && (
               <>
-                <Field>
-                  <Label htmlFor="ob-subs">Subreddits</Label>
-                  <Input
-                    id="ob-subs"
-                    value={subreddits}
-                    onChange={(e) => setSubreddits(e.target.value)}
-                    placeholder="startups, SaaS, indiehackers"
-                  />
-                  <Hint>Comma-separated, without r/</Hint>
-                </Field>
-                <Field>
-                  <Label htmlFor="ob-kw">Keywords</Label>
-                  <Input
-                    id="ob-kw"
-                    value={keywords}
-                    onChange={(e) => setKeywords(e.target.value)}
-                    placeholder="looking for, alternative to, recommend"
-                  />
-                </Field>
-              </>
-            )}
-
-            {step === 4 && (
-              <>
                 {hasApiKey && (
                   <Notice tone="sage">
                     An LLM key is already saved. Leave the key blank to keep it.
@@ -458,8 +491,58 @@ export function OnboardingFlow() {
                     type="password"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={hasApiKey ? "Leave blank to keep current" : undefined}
+                    placeholder={
+                      hasApiKey ? "Leave blank to keep current" : undefined
+                    }
                   />
+                </Field>
+              </>
+            )}
+
+            {step === 4 && (
+              <>
+                <Field>
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <Label htmlFor="ob-subs">Subreddits</Label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      leading={<IconRefresh size={14} />}
+                      loading={suggesting}
+                      onClick={() => void runSuggest(true)}
+                    >
+                      Regenerate
+                    </Button>
+                  </div>
+                  <TagInput
+                    id="ob-subs"
+                    values={subreddits}
+                    onChange={setSubreddits}
+                    stripSubPrefix
+                    disabled={suggesting}
+                    placeholder={
+                      suggesting
+                        ? "Suggesting communities…"
+                        : "Add r/name and press Enter"
+                    }
+                  />
+                  <Hint>
+                    Suggested from your product voice. Click a chip’s × to
+                    remove, or type to add.
+                  </Hint>
+                </Field>
+                <Field>
+                  <Label htmlFor="ob-kw">Keywords</Label>
+                  <TagInput
+                    id="ob-kw"
+                    values={keywords}
+                    onChange={setKeywords}
+                    placeholder="Add a keyword and press Enter"
+                  />
+                  <Hint>
+                    Signals for Discover — e.g. “looking for”, “recommend”.
+                  </Hint>
                 </Field>
                 <Notice tone="accent">
                   We&apos;ll run your first thread fetch when you finish.
@@ -470,7 +553,7 @@ export function OnboardingFlow() {
         </div>
       </main>
 
-      <footer className="fixed bottom-0 left-0 right-0 flex items-center justify-between px-6 py-4 bg-surface border-t border-line">
+      <footer className="fixed bottom-0 left-0 right-0 flex items-center justify-between border-t border-line bg-surface px-6 py-4">
         <Button variant="ghost" disabled={step === 0} onClick={handleBack}>
           Back
         </Button>

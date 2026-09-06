@@ -6,6 +6,7 @@ import type { Draft, DraftStatus } from "@/lib/api";
 import { formatRelativeTime, truncate } from "@/lib/format";
 import { Pill } from "@/components/ui/pill";
 import { Surface } from "@/components/ui/surface";
+import { SubredditName } from "@/components/ui/subreddit-name";
 
 export function DraftCard({ draft }: { draft: Draft }) {
   return (
@@ -22,10 +23,10 @@ export function DraftCard({ draft }: { draft: Draft }) {
       >
         <div className="flex items-start justify-between gap-3 mb-2">
           <div className="min-w-0">
-            <p className="text-[12px] text-ink-3 font-mono">
-              {draft.kind === "submission" ? "Post · " : ""}
-              r/{draft.subreddit}
-            </p>
+            <SubredditName
+              name={draft.subreddit}
+              prefix={draft.kind === "submission" ? "Post · " : undefined}
+            />
             <h3 className="mt-0.5 text-[15px] font-semibold text-ink tracking-tight leading-snug truncate">
               {draft.title}
             </h3>

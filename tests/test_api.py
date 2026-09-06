@@ -178,3 +178,27 @@ def test_generate_submissions_api(
     assert len(data["drafts"]) == 2
     assert data["drafts"][0]["kind"] == "submission"
     assert data["drafts"][0]["title"].startswith("Idea for")
+
+
+def test_suggest_subreddits_api(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "rcopilot.llm.suggest_subreddits",
+        lambda llm, *, product, tone="", persona="", count=12: [
+            "startups",
+            "SaaS",
+            "indiehackers",
+        ][:count],
+    )
+    response = client.post(
+        "/api/subreddits/suggest",
+        json={"product": "A B2B analytics tool", "count": 3},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["subreddits"] == ["startups", "SaaS", "indiehackers"]
+
+
+def test_suggest_subreddits_requires_product(client: TestClient) -> None:
+    response = client.post("/api/subreddits/suggest", json={"product": ""})
+    assert response.status_code == 400

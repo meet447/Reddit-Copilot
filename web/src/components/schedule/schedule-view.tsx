@@ -22,6 +22,7 @@ import { Mascot } from "@/components/ui/mascot";
 import { AsciiAccent } from "@/components/ui/ascii-accent";
 import { BestTimeChips } from "@/components/schedule/best-time-chips";
 import { IconPlus } from "@/components/ui/icons";
+import { SubredditName } from "@/components/ui/subreddit-name";
 
 function groupByDay(items: Draft[]): Map<string, Draft[]> {
   const map = new Map<string, Draft[]>();
@@ -39,13 +40,8 @@ function groupByDay(items: Draft[]): Map<string, Draft[]> {
   return map;
 }
 
-function itemHeadline(item: Draft): string {
-  const sub = `r/${item.subreddit}`;
-  const title = item.title || "Untitled";
-  if (item.kind === "submission") {
-    return `Post · ${sub} · ${title}`;
-  }
-  return `Reply · ${sub} · ${title}`;
+function itemKindLabel(item: Draft): string {
+  return item.kind === "submission" ? "Post" : "Reply";
 }
 
 export function ScheduleView() {
@@ -154,7 +150,7 @@ export function ScheduleView() {
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
-                        <div className="mb-1 flex items-center gap-2">
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
                           <Pill
                             status={
                               item.status === "posted"
@@ -164,12 +160,16 @@ export function ScheduleView() {
                                   : "scheduled"
                             }
                           />
+                          <span className="text-[12px] text-ink-3">
+                            {itemKindLabel(item)}
+                          </span>
+                          <SubredditName name={item.subreddit} />
                         </div>
                         <Link
                           href={`/queue/${item.id}`}
                           className="block truncate text-[14px] font-medium text-ink hover:text-ink-2"
                         >
-                          {itemHeadline(item)}
+                          {item.title}
                         </Link>
                         <p className="mt-1 line-clamp-1 text-[13px] text-ink-2">
                           {item.body}

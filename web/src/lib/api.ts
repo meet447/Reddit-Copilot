@@ -279,6 +279,35 @@ export function generateSubmissions(input?: {
   });
 }
 
+export function suggestSubreddits(input?: {
+  product?: string;
+  tone?: string;
+  persona?: string;
+  count?: number;
+}): Promise<{ subreddits: string[] }> {
+  return request("/api/subreddits/suggest", {
+    method: "POST",
+    body: JSON.stringify({
+      product: input?.product,
+      tone: input?.tone,
+      persona: input?.persona,
+      count: input?.count ?? 12,
+    }),
+  });
+}
+
+export function getSubredditIcons(
+  names: string[],
+): Promise<{ icons: Record<string, string | null> }> {
+  const cleaned = names
+    .map((n) => n.trim().replace(/^r\//i, ""))
+    .filter(Boolean);
+  if (!cleaned.length) return Promise.resolve({ icons: {} });
+  const search = new URLSearchParams();
+  search.set("names", cleaned.join(","));
+  return request(`/api/subreddits/icons?${search.toString()}`);
+}
+
 export async function getBestTimes(
   subreddit: string,
   opts?: { count?: number },

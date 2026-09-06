@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import html
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -320,3 +322,70 @@ def sample_subreddit_post_hours(
         logger.warning("Could not sample hours for r/%s: %s", cleaned_sub, exc)
         return []
     return hours
+
+
+_ICON_CACHE: dict[str, tuple[float, str | None]] = {}
+_ICON_CACHE_TTL_SECONDS = 60 * 60 * 24  # 24h
+
+
+def _clean_icon_url(value: object) -> str | None:
+    if not value:
+        return None
+    url = html.unescape(str(value)).strip()
+    if not url or url in {"default", "self"}:
+        return None
+    if url.startswith("//"):
+        url = f"https:{url}"
+    if not url.startswith("http"):
+        return None
+    return url
+
+
+def fetch_subreddit_icon(reddit: praw.Reddit, subreddit: str) -> str | None:
+    """Return a community icon URL for *subreddit*, or None."""
+    cleaned = subreddit.strip().lstrip("r/")
+    if not cleaned:
+        return None
+    key = cleaned.lower()
+    cached = _ICON_CACHE.get(key)
+    now = time.time()
+    if cached and now - cached[0] < _ICON_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    icon: str | None = None
+    try:
+        sub = reddit.subreddit(cleaned)
+        icon = (
+            _clean_icon_url(getattr(sub, "community_icon", None))
+            or _clean_icon_url(getattr(sub, "icon_img", None))
+            or _clean_icon_url(getattr(sub, "header_img", None))
+        )
+    except Exception as exc:
+        logger.debug("Could not fetch icon for r/%s: %s", cleaned, exc)
+        icon = None
+
+    _ICON_CACHE[key] = (now, icon)
+    return icon
+
+
+def fetch_subreddit_icons(
+    reddit: praw.Reddit,
+    names: list[str],
+    *,
+    limit: int = 40,
+) -> dict[str, str | None]:
+    """Batch-resolve icon URLs keyed by original cleaned name."""
+    results: dict[str, str | None] = {}
+    seen: set[str] = set()
+    for raw in names:
+        cleaned = raw.strip().lstrip("r/")
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        results[cleaned] = fetch_subreddit_icon(reddit, cleaned)
+        if len(results) >= limit:
+            break
+    return results

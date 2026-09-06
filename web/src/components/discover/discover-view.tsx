@@ -14,6 +14,7 @@ import { ApiDownNotice, Notice } from "@/components/ui/notice";
 import { Mascot } from "@/components/ui/mascot";
 import { AsciiAccent } from "@/components/ui/ascii-accent";
 import { Surface } from "@/components/ui/surface";
+import { SubredditName } from "@/components/ui/subreddit-name";
 import { IconPlus, IconSkip, IconRefresh } from "@/components/ui/icons";
 import { Input, Field, Label } from "@/components/ui/field";
 
@@ -242,9 +243,7 @@ export function DiscoverView() {
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
-                    <p className="text-[12px] font-mono text-ink-3">
-                      r/{post.subreddit}
-                    </p>
+                    <SubredditName name={post.subreddit} />
                     <a
                       href={post.permalink}
                       target="_blank"

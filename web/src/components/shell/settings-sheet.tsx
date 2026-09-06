@@ -7,15 +7,17 @@ import {
   putConfig,
   putSecrets,
   startOAuth,
+  suggestSubreddits,
   type AppConfig,
   type SecretsUpdate,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
-import { IconX } from "@/components/ui/icons";
+import { IconRefresh, IconX } from "@/components/ui/icons";
 import { Field, Label, Input, Textarea, Hint } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { MeuxeMark, Mascot } from "@/components/ui/mascot";
+import { TagInput } from "@/components/ui/tag-input";
 
 const sections = [
   { id: "accounts", label: "Accounts" },
@@ -57,8 +59,8 @@ export function SettingsSheet({
   const [tone, setTone] = useState("");
   const [persona, setPersona] = useState("");
   const [avoid, setAvoid] = useState("");
-  const [subreddits, setSubreddits] = useState("");
-  const [keywords, setKeywords] = useState("");
+  const [subreddits, setSubreddits] = useState<string[]>([]);
+  const [keywords, setKeywords] = useState<string[]>([]);
   const [dailyCap, setDailyCap] = useState("");
   const [minInterval, setMinInterval] = useState("");
   const [llmModel, setLlmModel] = useState("");
@@ -67,6 +69,7 @@ export function SettingsSheet({
   const [hasApiKey, setHasApiKey] = useState(false);
   const [searchQueries, setSearchQueries] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -84,8 +87,8 @@ export function SettingsSheet({
         setTone(c.voice?.tone ?? "");
         setPersona(c.voice?.persona ?? "");
         setAvoid(c.voice?.avoid ?? "");
-        setSubreddits((c.subreddits ?? []).join(", "));
-        setKeywords((c.discovery?.keywords ?? []).join(", "));
+        setSubreddits(c.subreddits ?? []);
+        setKeywords(c.discovery?.keywords ?? []);
         setSearchQueries((c.discovery?.search_queries ?? []).join("\n"));
         setDailyCap(String(c.rate_limits?.daily_cap ?? ""));
         setMinInterval(String(c.rate_limits?.min_interval_seconds ?? ""));
@@ -126,10 +129,7 @@ export function SettingsSheet({
     setSaved(false);
     try {
       await putConfig({
-        subreddits: subreddits
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
+        subreddits,
         voice: {
           product: productDesc,
           tone,
@@ -137,10 +137,7 @@ export function SettingsSheet({
           avoid,
         },
         discovery: {
-          keywords: keywords
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
+          keywords,
         },
         rate_limits: {
           daily_cap: dailyCap ? Number(dailyCap) : undefined,
@@ -361,22 +358,54 @@ export function SettingsSheet({
             {loaded && section === "discovery" && (
               <>
                 <Field>
-                  <Label htmlFor="subreddits">Subreddits</Label>
-                  <Input
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <Label htmlFor="subreddits">Subreddits</Label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      leading={<IconRefresh size={14} />}
+                      loading={suggesting}
+                      onClick={async () => {
+                        setSuggesting(true);
+                        setError(null);
+                        try {
+                          const data = await suggestSubreddits({
+                            product: productDesc,
+                            tone,
+                            persona,
+                          });
+                          setSubreddits(data.subreddits ?? []);
+                        } catch (e) {
+                          setError(
+                            e instanceof Error
+                              ? e.message
+                              : "Could not suggest subreddits.",
+                          );
+                        } finally {
+                          setSuggesting(false);
+                        }
+                      }}
+                    >
+                      Suggest
+                    </Button>
+                  </div>
+                  <TagInput
                     id="subreddits"
-                    value={subreddits}
-                    onChange={(e) => setSubreddits(e.target.value)}
-                    placeholder="startups, SaaS, indiehackers"
+                    values={subreddits}
+                    onChange={setSubreddits}
+                    stripSubPrefix
+                    placeholder="Add r/name and press Enter"
                   />
-                  <Hint>Comma-separated, without r/</Hint>
+                  <Hint>Click × to remove. Type a name and press Enter to add.</Hint>
                 </Field>
                 <Field>
                   <Label htmlFor="keywords">Keywords</Label>
-                  <Input
+                  <TagInput
                     id="keywords"
-                    value={keywords}
-                    onChange={(e) => setKeywords(e.target.value)}
-                    placeholder="looking for tool, alternative to"
+                    values={keywords}
+                    onChange={setKeywords}
+                    placeholder="Add a keyword and press Enter"
                   />
                 </Field>
                 {searchQueries && (

@@ -118,6 +118,13 @@ class GenerateSubmissionsBody(BaseModel):
     account_name: str | None = None
 
 
+class SuggestSubredditsBody(BaseModel):
+    product: str | None = None
+    tone: str | None = None
+    persona: str | None = None
+    count: int = 12
+
+
 class ConfigUpdateBody(BaseModel):
     subreddits: list[str] | None = None
     listing: str | None = None
@@ -534,6 +541,60 @@ def create_app(config_path: str | None = None) -> FastAPI:
             if d is not None
         ]
         return {"created": len(drafts), "drafts": drafts}
+
+    @app.post("/api/subreddits/suggest")
+    def suggest_subreddits_route(body: SuggestSubredditsBody) -> dict[str, Any]:
+        from rcopilot.llm import suggest_subreddits
+
+        config = get_config()
+        if not config.llm.api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="Add an LLM API key first so we can suggest subreddits.",
+            )
+        product = (body.product if body.product is not None else config.voice.product) or ""
+        tone = body.tone if body.tone is not None else config.voice.tone
+        persona = body.persona if body.persona is not None else config.voice.persona
+        try:
+            names = suggest_subreddits(
+                config.llm,
+                product=product,
+                tone=tone or "",
+                persona=persona or "",
+                count=body.count,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("subreddit suggest failed: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not suggest subreddits: {exc}",
+            ) from exc
+        return {"subreddits": names}
+
+    @app.get("/api/subreddits/icons")
+    def subreddit_icons(
+        names: str = Query(..., description="Comma-separated subreddit names"),
+    ) -> dict[str, Any]:
+        config = get_config()
+        cleaned = [
+            part.strip().lstrip("r/")
+            for part in names.split(",")
+            if part.strip()
+        ]
+        if not cleaned:
+            return {"icons": {}}
+        icons: dict[str, str | None] = {name: None for name in cleaned[:40]}
+        try:
+            account = config.accounts[0] if config.accounts else None
+            if account is not None:
+                reddit = reddit_client.get_reddit(account)
+                fetched = reddit_client.fetch_subreddit_icons(reddit, cleaned)
+                icons.update(fetched)
+        except Exception as exc:
+            logger.warning("subreddit icons fetch failed: %s", exc)
+        return {"icons": icons}
 
     @app.get("/api/best-times")
     def best_times(

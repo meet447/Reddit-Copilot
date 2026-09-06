@@ -34,6 +34,7 @@ import { Dots } from "@/components/ui/dots";
 import { Mascot } from "@/components/ui/mascot";
 import { PostedDetailView } from "@/components/draft/posted-detail-view";
 import { BestTimeChips } from "@/components/schedule/best-time-chips";
+import { SubredditName } from "@/components/ui/subreddit-name";
 
 export function DraftDetailView({ id }: { id: number }) {
   const router = useRouter();
@@ -242,10 +243,10 @@ export function DraftDetailView({ id }: { id: number }) {
             </IconButton>
           </Link>
           <div className="min-w-0">
-            <p className="text-[12px] font-mono text-ink-3">
-              r/{draft.subreddit}
-              {isSubmission ? " · original post" : ""}
-            </p>
+            <SubredditName
+              name={draft.subreddit}
+              prefix={isSubmission ? "original post · " : undefined}
+            />
             <h1 className="truncate text-[18px] font-semibold text-ink tracking-tight">
               {isSubmission ? title || draft.title : draft.title}
             </h1>
@@ -404,9 +405,7 @@ export function DraftDetailView({ id }: { id: number }) {
                 <p className="text-[12px] font-medium text-ink-3 mb-2">
                   Destination
                 </p>
-                <p className="text-[15px] font-semibold text-ink">
-                  r/{draft.subreddit}
-                </p>
+                <SubredditName name={draft.subreddit} size="md" mono={false} />
                 <p className="mt-2 text-[13px] text-ink-2">
                   Self-post · edit title and body, then post or schedule.
                 </p>

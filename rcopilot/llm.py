@@ -295,6 +295,81 @@ def generate_submission(
     return parse_submission_payload(content, product=product)
 
 
+def parse_subreddit_list(raw: str, *, limit: int = 16) -> list[str]:
+    """Parse a JSON array of subreddit names from an LLM response."""
+    text = _strip_enclosing_quotes(raw)
+    fence = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, flags=re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    start = text.find("[")
+    end = text.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("LLM did not return a JSON array of subreddits")
+    data = json.loads(text[start : end + 1])
+    if not isinstance(data, list):
+        raise ValueError("LLM subreddit payload was not a list")
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in data:
+        name = str(item).strip().lstrip("r/").lstrip("/")
+        name = re.sub(r"[^A-Za-z0-9_]", "", name)
+        key = name.lower()
+        if len(name) < 2 or len(name) > 50 or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+        if len(names) >= limit:
+            break
+    if not names:
+        raise ValueError("LLM returned no usable subreddit names")
+    return names
+
+
+def suggest_subreddits(
+    llm_config: LLMConfig,
+    *,
+    product: str,
+    tone: str = "",
+    persona: str = "",
+    count: int = 12,
+) -> list[str]:
+    """Suggest relevant subreddits from product voice context."""
+    if not (product or "").strip():
+        raise ValueError("Describe your product before suggesting subreddits")
+    n = max(4, min(int(count), 20))
+    prompt = f"""Suggest Reddit communities where someone with this product should participate.
+
+Product / what they make:
+{product.strip()}
+
+Tone:
+{tone.strip() or "(not specified)"}
+
+Persona:
+{persona.strip() or "(not specified)"}
+
+Return {n} real, active subreddit names that fit (discussion communities, founder/product audiences, problem-space niches). Mix broad and niche. Prefer communities where helpful comments or organic self-posts make sense — not spammy promo subs.
+
+Rules:
+- Names only, no r/ prefix
+- No invented subreddits if you know better alternatives
+- No duplicates
+- Return ONLY a JSON array of strings"""
+
+    client = OpenAI(base_url=llm_config.base_url, api_key=llm_config.api_key)
+    logger.info("Suggesting subreddits with model %s", llm_config.model)
+    response = client.chat.completions.create(
+        model=llm_config.model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+    content = response.choices[0].message.content if response.choices else None
+    if not content or not content.strip():
+        raise RuntimeError("LLM returned an empty subreddit list")
+    return parse_subreddit_list(content, limit=n)
+
+
 def generate_search_queries(
     llm_config: LLMConfig,
     *,

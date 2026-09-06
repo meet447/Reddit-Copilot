@@ -16,6 +16,7 @@ import {
 import { Notice } from "@/components/ui/notice";
 import { Pill } from "@/components/ui/pill";
 import { Surface } from "@/components/ui/surface";
+import { SubredditName } from "@/components/ui/subreddit-name";
 import { useState } from "react";
 
 export function PostedDetailView({
@@ -69,9 +70,7 @@ export function PostedDetailView({
             </IconButton>
           </Link>
           <div className="min-w-0">
-            <p className="text-[12px] font-mono text-ink-3">
-              r/{draft.subreddit}
-            </p>
+            <SubredditName name={draft.subreddit} />
             <h1 className="truncate text-[18px] font-semibold tracking-tight text-ink">
               {draft.title}
             </h1>

@@ -25,6 +25,7 @@ import {
   fromDatetimeLocalValue,
   toDatetimeLocalValue,
 } from "@/lib/format";
+import { SubredditName } from "@/components/ui/subreddit-name";
 
 export function PostsView() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -194,9 +195,10 @@ export function PostsView() {
               >
                 <div className="mb-2 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="font-mono text-[12px] text-ink-3">
-                      Post · r/{draft.subreddit}
-                    </p>
+                    <SubredditName
+                      name={draft.subreddit}
+                      prefix="Post · "
+                    />
                     <Link
                       href={`/queue/${draft.id}`}
                       className="mt-0.5 block truncate text-[15px] font-semibold text-ink hover:text-ink-2"
