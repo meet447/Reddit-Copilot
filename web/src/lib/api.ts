@@ -11,9 +11,11 @@ export interface TopComment {
   score: number;
 }
 
+export type DraftKind = "comment" | "submission";
+
 export interface Draft {
   id: number;
-  post_id: string;
+  post_id: string | null;
   account_name: string;
   body: string;
   status: DraftStatus;
@@ -26,8 +28,8 @@ export interface Draft {
   title: string;
   selftext: string;
   url: string;
-  post_permalink: string;
-  created_utc: number;
+  post_permalink: string | null;
+  created_utc: number | null;
   top_comments: TopComment[];
   relevance_score: number;
   score_reasons: string[];
@@ -36,7 +38,17 @@ export interface Draft {
   outcome_replies?: number | null;
   outcome_removed?: boolean;
   outcomes_polled_at?: string | null;
+  kind?: DraftKind;
+  target_subreddit?: string | null;
+  submission_id?: string | null;
   lint_warnings?: { code: string; message: string }[];
+}
+
+export interface BestTimeSuggestion {
+  run_at: string;
+  label: string;
+  score: number;
+  hour_utc: number;
 }
 
 export interface Post {
@@ -200,10 +212,16 @@ export function getDraft(id: number): Promise<Draft> {
   return request<Draft>(`/api/drafts/${id}`);
 }
 
-export function patchDraft(id: number, body: string): Promise<Draft> {
+export function patchDraft(
+  id: number,
+  body: string,
+  title?: string,
+): Promise<Draft> {
   return request<Draft>(`/api/drafts/${id}`, {
     method: "PATCH",
-    body: JSON.stringify({ body }),
+    body: JSON.stringify(
+      title !== undefined ? { body, title } : { body },
+    ),
   });
 }
 
@@ -238,6 +256,32 @@ export function scheduleDraft(id: number, runAt: string): Promise<Draft> {
 
 export function unscheduleDraft(id: number): Promise<Draft> {
   return request<Draft>(`/api/drafts/${id}/unschedule`, { method: "POST" });
+}
+
+export function createSubmission(input: {
+  subreddit: string;
+  title: string;
+  body: string;
+}): Promise<Draft> {
+  return request<Draft>("/api/submissions", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getBestTimes(
+  subreddit: string,
+  opts?: { count?: number },
+): Promise<{
+  subreddit: string;
+  sample_size: number;
+  suggestions: BestTimeSuggestion[];
+}> {
+  const search = new URLSearchParams();
+  search.set("subreddit", subreddit);
+  search.set("tz_offset_minutes", String(-new Date().getTimezoneOffset()));
+  if (opts?.count) search.set("count", String(opts.count));
+  return request(`/api/best-times?${search.toString()}`);
 }
 
 export async function getPosts(params?: {

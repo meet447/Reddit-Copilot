@@ -19,7 +19,9 @@ from rcopilot.config import (
 from rcopilot.pipeline import (
     approve_draft,
     cancel_schedule,
+    create_submission_draft,
     poll_outcomes,
+    post_due_scheduled,
     reject_draft,
     schedule_draft,
 )
@@ -156,3 +158,44 @@ def test_poll_outcomes_skips_without_id_or_permalink(tmp_path: Path) -> None:
     draft = store.get_draft(draft_id)
     assert draft is not None
     assert draft["outcomes_polled_at"] is None
+
+
+def test_schedule_and_post_due_submission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path / "pipeline.db")
+    store.ensure_schema()
+    config = _config()
+    draft_id = create_submission_draft(
+        config,
+        store,
+        subreddit="python",
+        title="Launch notes",
+        body="We shipped a thing.",
+    )
+
+    run_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    schedule_draft(store, draft_id, run_at)
+
+    monkeypatch.setattr(
+        "rcopilot.reddit_client.get_reddit",
+        lambda account: object(),
+    )
+    monkeypatch.setattr(
+        "rcopilot.reddit_client.post_submission",
+        lambda reddit, subreddit, title, selftext: (
+            "https://reddit.com/r/python/comments/abc123/launch_notes/",
+            "abc123",
+        ),
+    )
+
+    results = post_due_scheduled(config, store)
+    assert len(results) == 1
+    assert results[0]["ok"] is True
+    assert results[0]["submission_id"] == "abc123"
+
+    draft = store.get_draft(draft_id)
+    assert draft is not None
+    assert draft["status"] == "posted"
+    assert draft["submission_id"] == "abc123"
+    assert draft["permalink"].endswith("/launch_notes/")

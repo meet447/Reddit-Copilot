@@ -12,6 +12,25 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 DRAFT_STATUSES = frozenset({"pending", "approved", "rejected", "posted", "error", "scheduled"})
+DRAFT_KINDS = frozenset({"comment", "submission"})
+
+_DRAFT_SELECT = """
+            SELECT d.id, d.post_id, d.account_name, d.body, d.status, d.error, d.permalink,
+                   d.created_at, d.updated_at, d.run_at, d.comment_id,
+                   d.outcome_score, d.outcome_replies, d.outcome_removed, d.outcomes_polled_at,
+                   d.kind, d.submission_id, d.target_subreddit,
+                   COALESCE(p.subreddit, d.target_subreddit) AS subreddit,
+                   COALESCE(p.title, d.title) AS title,
+                   COALESCE(p.selftext, '') AS selftext,
+                   COALESCE(p.url, '') AS url,
+                   p.permalink AS post_permalink,
+                   p.created_utc,
+                   p.top_comments,
+                   p.relevance_score,
+                   p.score_reasons
+            FROM drafts d
+            LEFT JOIN posts p ON p.id = d.post_id
+"""
 
 
 def _utc_now_iso() -> str:
@@ -79,7 +98,7 @@ class Store:
 
             CREATE TABLE IF NOT EXISTS drafts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                post_id TEXT NOT NULL UNIQUE,
+                post_id TEXT,
                 account_name TEXT NOT NULL,
                 body TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -87,6 +106,10 @@ class Store:
                 permalink TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'comment',
+                title TEXT,
+                target_subreddit TEXT,
+                submission_id TEXT,
                 FOREIGN KEY (post_id) REFERENCES posts(id)
             );
 
@@ -116,9 +139,77 @@ class Store:
         self._add_column_if_missing(conn, "drafts", "outcome_replies", "INTEGER")
         self._add_column_if_missing(conn, "drafts", "outcome_removed", "INTEGER DEFAULT 0")
         self._add_column_if_missing(conn, "drafts", "outcomes_polled_at", "TEXT")
+        self._add_column_if_missing(conn, "drafts", "kind", "TEXT NOT NULL DEFAULT 'comment'")
+        self._add_column_if_missing(conn, "drafts", "title", "TEXT")
+        self._add_column_if_missing(conn, "drafts", "target_subreddit", "TEXT")
+        self._add_column_if_missing(conn, "drafts", "submission_id", "TEXT")
+        self._migrate_drafts_nullable_post_id(conn)
 
         conn.commit()
         logger.debug("Ensured schema at %s", self.db_path)
+
+    def _migrate_drafts_nullable_post_id(self, conn: sqlite3.Connection) -> None:
+        """Allow NULL post_id for submission drafts; unique only when post_id is set."""
+        info = {row["name"]: row for row in conn.execute("PRAGMA table_info(drafts)").fetchall()}
+        post_col = info.get("post_id")
+        if post_col is None:
+            return
+        if int(post_col["notnull"] or 0) == 0:
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_drafts_post_id_unique
+                ON drafts(post_id) WHERE post_id IS NOT NULL
+                """
+            )
+            return
+
+        conn.executescript(
+            """
+            CREATE TABLE drafts_migrated (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id TEXT,
+                account_name TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                permalink TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                run_at TEXT,
+                comment_id TEXT,
+                outcome_score INTEGER,
+                outcome_replies INTEGER,
+                outcome_removed INTEGER DEFAULT 0,
+                outcomes_polled_at TEXT,
+                kind TEXT NOT NULL DEFAULT 'comment',
+                title TEXT,
+                target_subreddit TEXT,
+                submission_id TEXT,
+                FOREIGN KEY (post_id) REFERENCES posts(id)
+            );
+
+            INSERT INTO drafts_migrated (
+                id, post_id, account_name, body, status, error, permalink,
+                created_at, updated_at, run_at, comment_id,
+                outcome_score, outcome_replies, outcome_removed, outcomes_polled_at,
+                kind, title, target_subreddit, submission_id
+            )
+            SELECT
+                id, post_id, account_name, body, status, error, permalink,
+                created_at, updated_at, run_at, comment_id,
+                outcome_score, outcome_replies, outcome_removed, outcomes_polled_at,
+                COALESCE(kind, 'comment'), title, target_subreddit, submission_id
+            FROM drafts;
+
+            DROP TABLE drafts;
+            ALTER TABLE drafts_migrated RENAME TO drafts;
+
+            CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
+            CREATE INDEX IF NOT EXISTS idx_drafts_account_status ON drafts(account_name, status);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_drafts_post_id_unique
+                ON drafts(post_id) WHERE post_id IS NOT NULL;
+            """
+        )
 
     def upsert_post(
         self,
@@ -230,21 +321,63 @@ class Store:
         account_name: str,
         body: str,
         status: str = "pending",
+        *,
+        kind: str = "comment",
+        title: str | None = None,
+        target_subreddit: str | None = None,
     ) -> int:
         if status not in DRAFT_STATUSES:
             raise ValueError(f"Invalid draft status: {status}")
+        if kind not in DRAFT_KINDS:
+            raise ValueError(f"Invalid draft kind: {kind}")
+        if kind == "comment" and not post_id:
+            raise ValueError("Comment drafts require post_id")
+        if kind == "submission" and (not title or not target_subreddit):
+            raise ValueError("Submission drafts require title and target_subreddit")
 
         now = _utc_now_iso()
         conn = self.connect()
         cursor = conn.execute(
             """
-            INSERT INTO drafts (post_id, account_name, body, status, error, permalink, created_at, updated_at)
-            VALUES (?, ?, ?, ?, NULL, NULL, ?, ?)
+            INSERT INTO drafts (
+                post_id, account_name, body, status, error, permalink,
+                created_at, updated_at, kind, title, target_subreddit
+            )
+            VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)
             """,
-            (post_id, account_name, body, status, now, now),
+            (
+                post_id if kind == "comment" else None,
+                account_name,
+                body,
+                status,
+                now,
+                now,
+                kind,
+                title,
+                target_subreddit,
+            ),
         )
         conn.commit()
         return int(cursor.lastrowid)
+
+    def create_submission_draft(
+        self,
+        *,
+        account_name: str,
+        subreddit: str,
+        title: str,
+        body: str,
+        status: str = "pending",
+    ) -> int:
+        return self.create_draft(
+            "",
+            account_name,
+            body,
+            status,
+            kind="submission",
+            title=title.strip(),
+            target_subreddit=subreddit.strip().lstrip("r/"),
+        )
 
     def update_draft(self, draft_id: int, **fields: Any) -> None:
         if not fields:
@@ -263,6 +396,10 @@ class Store:
             "outcome_replies",
             "outcome_removed",
             "outcomes_polled_at",
+            "kind",
+            "title",
+            "target_subreddit",
+            "submission_id",
         }
         unknown = set(fields) - allowed
         if unknown:
@@ -270,6 +407,8 @@ class Store:
 
         if "status" in fields and fields["status"] not in DRAFT_STATUSES:
             raise ValueError(f"Invalid draft status: {fields['status']}")
+        if "kind" in fields and fields["kind"] not in DRAFT_KINDS:
+            raise ValueError(f"Invalid draft kind: {fields['kind']}")
 
         fields = dict(fields)
         fields["updated_at"] = _utc_now_iso()
@@ -284,15 +423,7 @@ class Store:
     def get_draft(self, draft_id: int) -> dict[str, Any] | None:
         conn = self.connect()
         row = conn.execute(
-            """
-            SELECT d.*,
-                   p.subreddit, p.title, p.selftext, p.url,
-                   p.permalink AS post_permalink, p.created_utc, p.top_comments,
-                   p.relevance_score, p.score_reasons
-            FROM drafts d
-            JOIN posts p ON p.id = d.post_id
-            WHERE d.id = ?
-            """,
+            _DRAFT_SELECT + " WHERE d.id = ?",
             (draft_id,),
         ).fetchone()
         return self._row_draft(row) if row else None
@@ -302,38 +433,25 @@ class Store:
         if status is not None and status not in DRAFT_STATUSES and status != "all":
             raise ValueError(f"Invalid draft status: {status}")
 
-        base_query = """
-            SELECT d.*,
-                   p.subreddit, p.title, p.selftext, p.url,
-                   p.permalink AS post_permalink, p.created_utc, p.top_comments,
-                   p.relevance_score, p.score_reasons
-            FROM drafts d
-            JOIN posts p ON p.id = d.post_id
-        """
-
         if status is None or status == "all":
             rows = conn.execute(
-                base_query + " ORDER BY d.created_at DESC"
+                _DRAFT_SELECT + " ORDER BY d.created_at DESC"
             ).fetchall()
         else:
             rows = conn.execute(
-                base_query + " WHERE d.status = ? ORDER BY d.created_at DESC",
+                _DRAFT_SELECT + " WHERE d.status = ? ORDER BY d.created_at DESC",
                 (status,),
             ).fetchall()
         return [self._row_draft(row) for row in rows]
 
     def list_posted_for_outcomes(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Posted drafts needing outcome poll, oldest poll first (never-polled first)."""
+        """Posted comment drafts needing outcome poll, oldest poll first."""
         conn = self.connect()
         rows = conn.execute(
-            """
-            SELECT d.*,
-                   p.subreddit, p.title, p.selftext, p.url,
-                   p.permalink AS post_permalink, p.created_utc, p.top_comments,
-                   p.relevance_score, p.score_reasons
-            FROM drafts d
-            JOIN posts p ON p.id = d.post_id
+            _DRAFT_SELECT
+            + """
             WHERE d.status = 'posted'
+              AND COALESCE(d.kind, 'comment') = 'comment'
             ORDER BY (d.outcomes_polled_at IS NULL) DESC, d.outcomes_polled_at ASC, d.id ASC
             LIMIT ?
             """,
@@ -344,13 +462,8 @@ class Store:
     def list_scheduled_due(self, now_iso: str) -> list[dict[str, Any]]:
         conn = self.connect()
         rows = conn.execute(
-            """
-            SELECT d.*,
-                   p.subreddit, p.title, p.selftext, p.url,
-                   p.permalink AS post_permalink, p.created_utc, p.top_comments,
-                   p.relevance_score, p.score_reasons
-            FROM drafts d
-            JOIN posts p ON p.id = d.post_id
+            _DRAFT_SELECT
+            + """
             WHERE d.status = 'scheduled'
               AND d.run_at IS NOT NULL
               AND d.run_at <= ?
@@ -363,13 +476,8 @@ class Store:
     def list_scheduled(self) -> list[dict[str, Any]]:
         conn = self.connect()
         rows = conn.execute(
-            """
-            SELECT d.*,
-                   p.subreddit, p.title, p.selftext, p.url,
-                   p.permalink AS post_permalink, p.created_utc, p.top_comments,
-                   p.relevance_score, p.score_reasons
-            FROM drafts d
-            JOIN posts p ON p.id = d.post_id
+            _DRAFT_SELECT
+            + """
             WHERE d.status = 'scheduled'
             ORDER BY d.run_at ASC
             """
@@ -500,6 +608,10 @@ class Store:
         raw_comments = data.get("top_comments")
         if isinstance(raw_comments, str):
             data["top_comments"] = json.loads(raw_comments)
+        elif raw_comments is None:
+            data["top_comments"] = []
         data["score_reasons"] = Store._parse_json_list(data.get("score_reasons"))
         data["outcome_removed"] = bool(data.get("outcome_removed", 0))
+        data["kind"] = data.get("kind") or "comment"
+        data["relevance_score"] = data.get("relevance_score") or 0
         return data

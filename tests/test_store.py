@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import pytest
 
 from rcopilot.store import Store
 
@@ -177,3 +180,41 @@ def test_count_drafts_by_status(tmp_path: Path) -> None:
     assert counts["pending"] == 1
     assert counts["approved"] == 1
     assert counts["scheduled"] == 0
+
+
+def test_submission_draft_null_post_id(tmp_path: Path) -> None:
+    store = Store(tmp_path / "test.db")
+    store.ensure_schema()
+
+    draft_id = store.create_submission_draft(
+        account_name="default",
+        subreddit="python",
+        title="Ship notes",
+        body="Here is what we learned.",
+    )
+    draft = store.get_draft(draft_id)
+    assert draft is not None
+    assert draft["kind"] == "submission"
+    assert draft["post_id"] is None
+    assert draft["title"] == "Ship notes"
+    assert draft["target_subreddit"] == "python"
+    assert draft["subreddit"] == "python"
+
+    # Multiple submissions with null post_id are allowed
+    second = store.create_submission_draft(
+        account_name="default",
+        subreddit="python",
+        title="Another",
+        body="More text.",
+    )
+    assert second != draft_id
+
+
+def test_comment_post_id_unique_still_enforced(tmp_path: Path) -> None:
+    store = Store(tmp_path / "test.db")
+    store.ensure_schema()
+    _sample_post(store)
+    store.create_draft("p1", "default", "first")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create_draft("p1", "default", "duplicate")

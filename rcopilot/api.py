@@ -35,6 +35,7 @@ from rcopilot.draft_lint import lint_draft
 from rcopilot.pipeline import (
     approve_draft,
     cancel_schedule,
+    create_submission_draft,
     draft_one,
     draft_pending,
     edit_draft,
@@ -51,6 +52,11 @@ from rcopilot.pipeline import (
     skip_post,
 )
 from rcopilot.store import Store
+from rcopilot.best_times import (
+    get_cached_hours,
+    set_cached_hours,
+    suggest_best_times,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,11 +85,15 @@ DRAFT_API_FIELDS = (
     "outcome_replies",
     "outcome_removed",
     "outcomes_polled_at",
+    "kind",
+    "target_subreddit",
+    "submission_id",
 )
 
 
 class DraftEditBody(BaseModel):
     body: str
+    title: str | None = None
 
 
 class ApproveBody(BaseModel):
@@ -92,6 +102,13 @@ class ApproveBody(BaseModel):
 
 class ScheduleBody(BaseModel):
     run_at: str
+
+
+class SubmissionCreateBody(BaseModel):
+    subreddit: str
+    title: str
+    body: str
+    account_name: str | None = None
 
 
 class ConfigUpdateBody(BaseModel):
@@ -239,7 +256,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         config = get_config()
         store = get_store(config)
         try:
-            edit_draft(store, draft_id, body.body)
+            edit_draft(store, draft_id, body.body, title=body.title)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         draft = store.get_draft(draft_id)
@@ -471,6 +488,61 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"outcomes": outcomes}
+
+    @app.post("/api/submissions")
+    def create_submission(body: SubmissionCreateBody) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            draft_id = create_submission_draft(
+                config,
+                store,
+                subreddit=body.subreddit,
+                title=body.title,
+                body=body.body,
+                account_name=body.account_name,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
+
+    @app.get("/api/best-times")
+    def best_times(
+        subreddit: str = Query(...),
+        tz_offset_minutes: int = Query(default=0),
+        count: int = Query(default=3, ge=1, le=6),
+    ) -> dict[str, Any]:
+        config = get_config()
+        cleaned = subreddit.strip().lstrip("r/")
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="subreddit is required")
+
+        hours = get_cached_hours(cleaned)
+        if hours is None:
+            hours = []
+            try:
+                account = config.accounts[0] if config.accounts else None
+                if account is not None:
+                    reddit = reddit_client.get_reddit(account)
+                    hours = reddit_client.sample_subreddit_post_hours(
+                        reddit, cleaned, limit=100
+                    )
+                    set_cached_hours(cleaned, hours)
+            except Exception as exc:
+                logger.warning("best-times sample failed for r/%s: %s", cleaned, exc)
+                hours = []
+
+        suggestions = suggest_best_times(
+            hours,
+            tz_offset_minutes=tz_offset_minutes,
+            count=count,
+        )
+        return {
+            "subreddit": cleaned,
+            "sample_size": len(hours),
+            "suggestions": suggestions,
+        }
 
     @app.get("/api/schedule")
     def get_schedule() -> dict[str, Any]:

@@ -33,12 +33,14 @@ import { Kbd, KeyCombo } from "@/components/ui/kbd";
 import { Dots } from "@/components/ui/dots";
 import { Mascot } from "@/components/ui/mascot";
 import { PostedDetailView } from "@/components/draft/posted-detail-view";
+import { BestTimeChips } from "@/components/schedule/best-time-chips";
 
 export function DraftDetailView({ id }: { id: number }) {
   const router = useRouter();
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [body, setBody] = useState("");
+  const [title, setTitle] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,6 +60,7 @@ export function DraftDetailView({ id }: { id: number }) {
       ]);
       setDraft(d);
       setBody(d.body);
+      setTitle(d.title ?? "");
       setScheduleValue(toDatetimeLocalValue(d.run_at));
       setSiblingIds(all.map((x) => x.id));
     } catch (e) {
@@ -79,15 +82,21 @@ export function DraftDetailView({ id }: { id: number }) {
       : null;
 
   const hasBody = Boolean(body.trim());
+  const isSubmission = draft?.kind === "submission";
   const canPost =
     hasBody &&
+    (!isSubmission || Boolean(title.trim())) &&
     draft != null &&
     draft.status !== "posted" &&
     draft.status !== "rejected";
 
   async function saveBody() {
     if (!draft) return;
-    await patchDraft(draft.id, body);
+    if (isSubmission) {
+      await patchDraft(draft.id, body, title.trim());
+    } else {
+      await patchDraft(draft.id, body);
+    }
   }
 
   async function runAction(
@@ -103,6 +112,7 @@ export function DraftDetailView({ id }: { id: number }) {
       const updated = await fn();
       setDraft(updated);
       setBody(updated.body);
+      setTitle(updated.title ?? "");
       if (successMsg) setMessage(successMsg);
     } catch (e) {
       setError(
@@ -116,7 +126,7 @@ export function DraftDetailView({ id }: { id: number }) {
   }
 
   async function handleGenerate() {
-    if (!draft || streaming || draft.status === "posted") return;
+    if (!draft || streaming || draft.status === "posted" || isSubmission) return;
     const wasRegen = Boolean(draft.body.trim() || body.trim());
     setStreaming(true);
     setBusy("generate");
@@ -177,7 +187,7 @@ export function DraftDetailView({ id }: { id: number }) {
         case "g":
         case "d":
           e.preventDefault();
-          void handleGenerate();
+          if (!isSubmission) void handleGenerate();
           break;
         case "j":
           if (nextId) router.push(`/queue/${nextId}`);
@@ -234,17 +244,20 @@ export function DraftDetailView({ id }: { id: number }) {
           <div className="min-w-0">
             <p className="text-[12px] font-mono text-ink-3">
               r/{draft.subreddit}
+              {isSubmission ? " · original post" : ""}
             </p>
             <h1 className="truncate text-[18px] font-semibold text-ink tracking-tight">
-              {draft.title}
+              {isSubmission ? title || draft.title : draft.title}
             </h1>
           </div>
           <Pill status={draft.status} />
         </div>
         <div className="hidden lg:flex items-center gap-3 text-[12px] text-ink-3">
-          <span className="inline-flex items-center gap-1">
-            <Kbd>D</Kbd> draft
-          </span>
+          {!isSubmission && (
+            <span className="inline-flex items-center gap-1">
+              <Kbd>D</Kbd> draft
+            </span>
+          )}
           <span className="inline-flex items-center gap-1">
             <Kbd>R</Kbd> reject
           </span>
@@ -292,8 +305,17 @@ export function DraftDetailView({ id }: { id: number }) {
 
             <Field className="flex min-h-0 flex-1 flex-col">
               <Label htmlFor="draft-body" className="shrink-0">
-                Your reply
+                {isSubmission ? "Post body" : "Your reply"}
               </Label>
+              {isSubmission && (
+                <Input
+                  className="mb-3 shrink-0"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Post title"
+                  disabled={streaming}
+                />
+              )}
               <div className="relative min-h-0 flex-1">
                 <Textarea
                   ref={editorRef}
@@ -304,7 +326,9 @@ export function DraftDetailView({ id }: { id: number }) {
                   placeholder={
                     streaming
                       ? ""
-                      : "Click Draft to write a reply, or type your own."
+                      : isSubmission
+                        ? "Write the post body."
+                        : "Click Draft to write a reply, or type your own."
                   }
                   className="absolute inset-0 h-full min-h-0 resize-none overflow-y-auto text-[15px]"
                 />
@@ -313,14 +337,16 @@ export function DraftDetailView({ id }: { id: number }) {
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-line px-6 py-4">
-            <Button
-              leading={<IconDraft size={16} />}
-              loading={busy === "generate"}
-              disabled={streaming || draft.status === "posted"}
-              onClick={() => void handleGenerate()}
-            >
-              {hasBody || draft.body ? "Regenerate" : "Draft"}
-            </Button>
+            {!isSubmission && (
+              <Button
+                leading={<IconDraft size={16} />}
+                loading={busy === "generate"}
+                disabled={streaming || draft.status === "posted"}
+                onClick={() => void handleGenerate()}
+              >
+                {hasBody || draft.body ? "Regenerate" : "Draft"}
+              </Button>
+            )}
             <Button
               variant="danger-soft"
               loading={busy === "reject"}
@@ -373,6 +399,20 @@ export function DraftDetailView({ id }: { id: number }) {
 
         <aside className="hidden w-[340px] shrink-0 overflow-y-auto bg-well xl:block">
           <div className="p-5 space-y-4">
+            {isSubmission ? (
+              <div>
+                <p className="text-[12px] font-medium text-ink-3 mb-2">
+                  Destination
+                </p>
+                <p className="text-[15px] font-semibold text-ink">
+                  r/{draft.subreddit}
+                </p>
+                <p className="mt-2 text-[13px] text-ink-2">
+                  Self-post · edit title and body, then post or schedule.
+                </p>
+              </div>
+            ) : (
+              <>
             <div>
               <p className="text-[12px] font-medium text-ink-3 mb-2">Thread</p>
               <a
@@ -433,6 +473,8 @@ export function DraftDetailView({ id }: { id: number }) {
                 </ul>
               </div>
             )}
+              </>
+            )}
           </div>
         </aside>
       </div>
@@ -452,7 +494,7 @@ export function DraftDetailView({ id }: { id: number }) {
             className="relative w-full max-w-sm p-6 motion-safe:animate-pop-in squircle"
           >
             <h2 className="text-[16px] font-semibold text-ink mb-4">
-              Schedule reply
+              {isSubmission ? "Schedule post" : "Schedule reply"}
             </h2>
             <Field>
               <Label htmlFor="schedule-at">Post at</Label>
@@ -463,6 +505,10 @@ export function DraftDetailView({ id }: { id: number }) {
                 onChange={(e) => setScheduleValue(e.target.value)}
               />
             </Field>
+            <BestTimeChips
+              subreddit={draft.subreddit}
+              onPick={(value) => setScheduleValue(value)}
+            />
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setScheduleOpen(false)}>
                 Cancel

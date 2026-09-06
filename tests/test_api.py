@@ -112,3 +112,49 @@ def test_onboarding_step_clamps(client: TestClient) -> None:
     response = client.put("/api/config", json={"onboarding_step": 99})
     assert response.status_code == 200
     assert response.json()["onboarding_step"] == 4
+
+
+def test_create_submission(client: TestClient) -> None:
+    response = client.post(
+        "/api/submissions",
+        json={
+            "subreddit": "python",
+            "title": "Hello self-post",
+            "body": "This is the body.",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["kind"] == "submission"
+    assert data["title"] == "Hello self-post"
+    assert data["target_subreddit"] == "python"
+    assert data["subreddit"] == "python"
+    assert data["body"] == "This is the body."
+    assert data["post_id"] is None
+    assert data["status"] == "pending"
+
+
+def test_best_times_mocked(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from rcopilot.best_times import clear_hour_cache
+
+    clear_hour_cache()
+    monkeypatch.setattr(
+        "rcopilot.reddit_client.get_reddit",
+        lambda account: object(),
+    )
+    monkeypatch.setattr(
+        "rcopilot.reddit_client.sample_subreddit_post_hours",
+        lambda reddit, subreddit, limit=100: [18] * 10 + [12] * 3,
+    )
+
+    response = client.get(
+        "/api/best-times",
+        params={"subreddit": "python", "tz_offset_minutes": 0, "count": 2},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["subreddit"] == "python"
+    assert data["sample_size"] == 13
+    assert len(data["suggestions"]) == 2
+    assert "run_at" in data["suggestions"][0]
+    assert "label" in data["suggestions"][0]

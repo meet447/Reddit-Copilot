@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   getSchedule,
   scheduleDraft,
@@ -19,6 +20,8 @@ import { Surface } from "@/components/ui/surface";
 import { Field, Label, Input } from "@/components/ui/field";
 import { Mascot } from "@/components/ui/mascot";
 import { AsciiAccent } from "@/components/ui/ascii-accent";
+import { BestTimeChips } from "@/components/schedule/best-time-chips";
+import { IconPlus } from "@/components/ui/icons";
 
 function groupByDay(items: Draft[]): Map<string, Draft[]> {
   const map = new Map<string, Draft[]>();
@@ -34,6 +37,15 @@ function groupByDay(items: Draft[]): Map<string, Draft[]> {
     map.set(day, list);
   }
   return map;
+}
+
+function itemHeadline(item: Draft): string {
+  const sub = `r/${item.subreddit}`;
+  const title = item.title || "Untitled";
+  if (item.kind === "submission") {
+    return `Post · ${sub} · ${title}`;
+  }
+  return `Reply · ${sub} · ${title}`;
 }
 
 export function ScheduleView() {
@@ -91,16 +103,21 @@ export function ScheduleView() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="shrink-0 border-b border-line px-6 py-4">
-        <h1 className="text-[22px] font-semibold text-ink tracking-tight">
-          Schedule
-        </h1>
-        <p className="mt-0.5 text-[13px] text-ink-3">
-          Approved replies queued for later.
-        </p>
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-line px-6 py-4">
+        <div>
+          <h1 className="text-[22px] font-semibold tracking-tight text-ink">
+            Schedule
+          </h1>
+          <p className="mt-0.5 text-[13px] text-ink-3">
+            Replies and original posts queued for later.
+          </p>
+        </div>
+        <Link href="/compose">
+          <Button leading={<IconPlus size={16} />}>New post</Button>
+        </Link>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
+      <div className="flex-1 space-y-6 overflow-y-auto px-6 py-4">
         {apiDown && <ApiDownNotice />}
 
         {loading ? (
@@ -112,16 +129,20 @@ export function ScheduleView() {
             <AsciiAccent className="mb-4" />
             <Mascot mood="neutral" className="mb-4" />
             <p className="max-w-sm text-[15px] text-ink-2">
-              Nothing scheduled yet. Approve a draft and pick a time.
+              Nothing scheduled yet. Schedule a reply from the queue, or compose
+              an original post.
             </p>
+            <Link href="/compose" className="mt-4">
+              <Button variant="secondary" leading={<IconPlus size={16} />}>
+                New post
+              </Button>
+            </Link>
           </div>
         ) : (
           Array.from(grouped.entries()).map(([day, dayItems]) => (
             <section key={day}>
               <AsciiAccent className="mb-3" width="short" />
-              <h2 className="text-[15px] font-semibold text-ink mb-3">
-                {day}
-              </h2>
+              <h2 className="mb-3 text-[15px] font-semibold text-ink">{day}</h2>
               <div className="space-y-2">
                 {dayItems.map((item) => (
                   <Surface
@@ -133,7 +154,7 @@ export function ScheduleView() {
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="mb-1 flex items-center gap-2">
                           <Pill
                             status={
                               item.status === "posted"
@@ -143,25 +164,30 @@ export function ScheduleView() {
                                   : "scheduled"
                             }
                           />
-                          <span className="text-[12px] font-mono text-ink-3">
-                            r/{item.subreddit}
-                          </span>
                         </div>
-                        <p className="text-[14px] font-medium text-ink truncate">
-                          {item.title}
-                        </p>
-                        <p className="mt-1 text-[13px] text-ink-2 line-clamp-1">
+                        <Link
+                          href={`/queue/${item.id}`}
+                          className="block truncate text-[14px] font-medium text-ink hover:text-ink-2"
+                        >
+                          {itemHeadline(item)}
+                        </Link>
+                        <p className="mt-1 line-clamp-1 text-[13px] text-ink-2">
                           {item.body}
                         </p>
                         <p className="mt-2 text-[12px] text-ink-3">
-                          {item.run_at ? formatDateTime(item.run_at) : "No time set"}
+                          {item.run_at
+                            ? formatDateTime(item.run_at)
+                            : "No time set"}
                         </p>
                       </div>
                       <div className="flex shrink-0 flex-col gap-2">
                         {editingId === item.id ? (
-                          <div className="w-48 space-y-2">
+                          <div className="w-56 space-y-2">
                             <Field>
-                              <Label htmlFor={`edit-${item.id}`} className="sr-only">
+                              <Label
+                                htmlFor={`edit-${item.id}`}
+                                className="sr-only"
+                              >
                                 New time
                               </Label>
                               <Input
@@ -171,6 +197,10 @@ export function ScheduleView() {
                                 onChange={(e) => setEditValue(e.target.value)}
                               />
                             </Field>
+                            <BestTimeChips
+                              subreddit={item.subreddit}
+                              onPick={(value) => setEditValue(value)}
+                            />
                             <div className="flex gap-1">
                               <Button
                                 size="sm"

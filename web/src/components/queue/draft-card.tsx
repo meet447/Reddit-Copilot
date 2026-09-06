@@ -23,6 +23,7 @@ export function DraftCard({ draft }: { draft: Draft }) {
         <div className="flex items-start justify-between gap-3 mb-2">
           <div className="min-w-0">
             <p className="text-[12px] text-ink-3 font-mono">
+              {draft.kind === "submission" ? "Post · " : ""}
               r/{draft.subreddit}
             </p>
             <h3 className="mt-0.5 text-[15px] font-semibold text-ink tracking-tight leading-snug truncate">
@@ -34,7 +35,9 @@ export function DraftCard({ draft }: { draft: Draft }) {
         <p className="text-[14px] text-ink-2 leading-relaxed line-clamp-2">
           {draft.body.trim()
             ? truncate(draft.body, 180)
-            : "No reply yet — open and click Draft."}
+            : draft.kind === "submission"
+              ? "No body yet — open to edit."
+              : "No reply yet — open and click Draft."}
         </p>
         {draft.status === "posted" && draft.outcomes_polled_at && (
           <p className="mt-2 text-[12px] text-ink-3">

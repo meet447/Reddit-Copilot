@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import praw
@@ -259,3 +260,63 @@ def post_comment(reddit: praw.Reddit, post_id: str, body: str) -> tuple[str, str
     if fallback and not str(fallback).startswith("http"):
         fallback = f"https://www.reddit.com{fallback}"
     return str(fallback), str(comment_id) if comment_id else None
+
+
+def post_submission(
+    reddit: praw.Reddit,
+    subreddit: str,
+    title: str,
+    selftext: str,
+) -> tuple[str, str | None]:
+    """Create a self-text submission; return (permalink, submission_id)."""
+    cleaned_sub = subreddit.strip().lstrip("r/")
+    if not cleaned_sub:
+        raise ValueError("Subreddit is required")
+    if not title.strip():
+        raise ValueError("Title must not be empty")
+    if not selftext.strip():
+        raise ValueError("Post body must not be empty")
+
+    target = reddit.subreddit(cleaned_sub)
+    try:
+        submission = target.submit(title=title.strip(), selftext=selftext.strip())
+    except RedditAPIException as exc:
+        for item in exc.items:
+            error_type = getattr(item, "error_type", "") or ""
+            message = getattr(item, "message", str(exc)) or str(exc)
+            if error_type == "RATELIMIT":
+                raise RuntimeError(f"Reddit rate limit exceeded: {message}") from exc
+        raise
+
+    submission_id = getattr(submission, "id", None)
+    permalink = getattr(submission, "permalink", None)
+    if permalink:
+        if not str(permalink).startswith("http"):
+            permalink = f"https://www.reddit.com{permalink}"
+        return str(permalink), str(submission_id) if submission_id else None
+
+    logger.warning("Submission created but permalink unavailable for r/%s", cleaned_sub)
+    return f"https://www.reddit.com/r/{cleaned_sub}/", str(submission_id) if submission_id else None
+
+
+def sample_subreddit_post_hours(
+    reddit: praw.Reddit,
+    subreddit: str,
+    *,
+    limit: int = 100,
+) -> list[int]:
+    """Return UTC hour-of-day (0-23) for recent posts in *subreddit*."""
+    cleaned_sub = subreddit.strip().lstrip("r/")
+    if not cleaned_sub:
+        return []
+    hours: list[int] = []
+    try:
+        for submission in reddit.subreddit(cleaned_sub).new(limit=limit):
+            created = float(getattr(submission, "created_utc", 0) or 0)
+            if not created:
+                continue
+            hours.append(int(datetime.fromtimestamp(created, tz=timezone.utc).hour))
+    except Exception as exc:
+        logger.warning("Could not sample hours for r/%s: %s", cleaned_sub, exc)
+        return []
+    return hours

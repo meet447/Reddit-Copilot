@@ -352,28 +352,83 @@ def reject_draft(store: Store, draft_id: int) -> None:
     logger.info("Rejected draft %d", draft_id)
 
 
-def edit_draft(store: Store, draft_id: int, body: str) -> None:
-    """Save an edited draft body."""
+def edit_draft(
+    store: Store,
+    draft_id: int,
+    body: str,
+    *,
+    title: str | None = None,
+) -> None:
+    """Save an edited draft body (and title for submissions)."""
     draft = store.get_draft(draft_id)
     if draft is None:
         raise ValueError(f"Draft not found: {draft_id}")
-    store.update_draft(draft_id, body=body)
-    store.add_audit("draft_edited", draft_id=draft_id, post_id=draft["post_id"])
+    fields: dict[str, Any] = {"body": body}
+    if title is not None and (draft.get("kind") or "comment") == "submission":
+        fields["title"] = title.strip()
+    store.update_draft(draft_id, **fields)
+    store.add_audit("draft_edited", draft_id=draft_id, post_id=draft.get("post_id"))
+
+
+def create_submission_draft(
+    config: AppConfig,
+    store: Store,
+    *,
+    subreddit: str,
+    title: str,
+    body: str,
+    account_name: str | None = None,
+) -> int:
+    """Create a pending original self-post draft."""
+    store.ensure_schema()
+    account = _resolve_account(config, account_name)
+    cleaned_sub = subreddit.strip().lstrip("r/")
+    cleaned_title = title.strip()
+    cleaned_body = body.strip()
+    if not cleaned_sub:
+        raise ValueError("Subreddit is required")
+    if not cleaned_title:
+        raise ValueError("Title is required")
+    if not cleaned_body:
+        raise ValueError("Post body is required")
+    draft_id = store.create_submission_draft(
+        account_name=account.name,
+        subreddit=cleaned_sub,
+        title=cleaned_title,
+        body=cleaned_body,
+    )
+    store.add_audit(
+        "submission_created",
+        draft_id=draft_id,
+        detail={"subreddit": cleaned_sub, "title": cleaned_title},
+    )
+    return draft_id
 
 
 def schedule_draft(store: Store, draft_id: int, run_at: datetime) -> None:
-    """Schedule a draft with a reply body for future posting."""
+    """Schedule a draft with a reply/post body for future posting."""
     draft = store.get_draft(draft_id)
     if draft is None:
         raise ValueError(f"Draft not found: {draft_id}")
     if draft["status"] not in {"pending", "approved"}:
         raise ValueError(f"Draft {draft_id} cannot be scheduled (status={draft['status']})")
     if not (draft.get("body") or "").strip():
-        raise ValueError(f"Draft {draft_id} needs a reply before scheduling")
+        raise ValueError(f"Draft {draft_id} needs a body before scheduling")
+    kind = draft.get("kind") or "comment"
+    if kind == "submission":
+        if not (draft.get("title") or "").strip():
+            raise ValueError(f"Draft {draft_id} needs a title before scheduling")
+        if not (draft.get("target_subreddit") or draft.get("subreddit") or "").strip():
+            raise ValueError(f"Draft {draft_id} needs a target subreddit before scheduling")
 
     run_at_iso = run_at.astimezone(timezone.utc).replace(microsecond=0).isoformat()
     store.update_draft(draft_id, status="scheduled", run_at=run_at_iso)
-    store.add_audit("scheduled", draft_id=draft_id, post_id=draft["post_id"], detail={"run_at": run_at_iso})
+    store.add_audit(
+        "scheduled",
+        draft_id=draft_id,
+        post_id=draft.get("post_id"),
+        detail={"run_at": run_at_iso, "kind": kind},
+    )
     logger.info("Scheduled draft %d for %s", draft_id, run_at_iso)
 
 
@@ -431,7 +486,40 @@ def _post_draft(config: AppConfig, store: Store, draft: dict[str, Any]) -> dict[
         return {"draft_id": draft["id"], "ok": False, "skipped": True, "error": reason}
 
     reddit = reddit_client.get_reddit(account)
+    kind = draft.get("kind") or "comment"
     try:
+        if kind == "submission":
+            subreddit = (draft.get("target_subreddit") or draft.get("subreddit") or "").strip()
+            title = (draft.get("title") or "").strip()
+            permalink, submission_id = reddit_client.post_submission(
+                reddit, subreddit, title, draft["body"]
+            )
+            store.update_draft(
+                draft["id"],
+                status="posted",
+                permalink=permalink,
+                submission_id=submission_id,
+                error=None,
+                run_at=None,
+            )
+            store.add_audit(
+                "posted",
+                draft_id=draft["id"],
+                detail={
+                    "permalink": permalink,
+                    "submission_id": submission_id,
+                    "kind": "submission",
+                    "subreddit": subreddit,
+                },
+            )
+            logger.info("Posted submission draft %d -> %s", draft["id"], permalink)
+            return {
+                "draft_id": draft["id"],
+                "ok": True,
+                "permalink": permalink,
+                "submission_id": submission_id,
+            }
+
         permalink, comment_id = reddit_client.post_comment(
             reddit, draft["post_id"], draft["body"]
         )
@@ -447,7 +535,7 @@ def _post_draft(config: AppConfig, store: Store, draft: dict[str, Any]) -> dict[
             "posted",
             draft_id=draft["id"],
             post_id=draft["post_id"],
-            detail={"permalink": permalink, "comment_id": comment_id},
+            detail={"permalink": permalink, "comment_id": comment_id, "kind": "comment"},
         )
         logger.info("Posted draft %d -> %s", draft["id"], permalink)
         return {
@@ -459,7 +547,12 @@ def _post_draft(config: AppConfig, store: Store, draft: dict[str, Any]) -> dict[
     except Exception as exc:
         logger.exception("Failed to post draft %d: %s", draft["id"], exc)
         store.update_draft(draft["id"], status="error", error=str(exc))
-        store.add_audit("post_error", draft_id=draft["id"], post_id=draft["post_id"], detail={"error": str(exc)})
+        store.add_audit(
+            "post_error",
+            draft_id=draft["id"],
+            post_id=draft.get("post_id"),
+            detail={"error": str(exc), "kind": kind},
+        )
         return {"draft_id": draft["id"], "ok": False, "error": str(exc)}
 
 
