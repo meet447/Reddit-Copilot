@@ -14,6 +14,7 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+" /></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/ui-Next.js-black.svg" alt="Next.js" /></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/api-FastAPI-009688.svg" alt="FastAPI" /></a>
+  <img src="https://img.shields.io/badge/status-early%20development-orange.svg" alt="Status: early development" />
   <a href="https://github.com/meet447/Reddit-Karma-Bot/stargazers"><img src="https://img.shields.io/github/stars/meet447/Reddit-Karma-Bot?style=social" alt="GitHub stars" /></a>
   <a href="https://github.com/meet447/Reddit-Karma-Bot/issues"><img src="https://img.shields.io/github/issues/meet447/Reddit-Karma-Bot" alt="GitHub issues" /></a>
 </p>
@@ -29,6 +30,9 @@
 </p>
 
 ---
+
+> [!WARNING]
+> **Early development.** Reddit Copilot is actively changing. Expect rough edges, breaking config/API changes, and incomplete features. Feedback and issues are welcome — production use is at your own risk.
 
 Formerly **Reddit-Karma-Bot** — rebuilt as a **human-in-the-loop** copilot, not a karma farmer.
 
