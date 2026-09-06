@@ -177,6 +177,7 @@ class ProjectUpdateBody(BaseModel):
     subreddits: list[str] | None = None
     keywords: list[str] | None = None
     complete: bool | None = None
+    setup_step: int | None = None
 
 
 class ActiveProjectBody(BaseModel):
@@ -283,6 +284,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         data["onboarding_complete"] = bool(
             config.onboarding_complete and has_finished_project(store)
         )
+        setup = store.find_setup_project()
+        data["setup_project"] = serialize_project(setup) if setup else None
         return data
 
     @app.on_event("startup")
@@ -821,7 +824,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
             name=(body.name or "").strip(),
             interview_messages=[opening],
         )
-        return serialize_project(project)
+        for item in store.list_projects(include_empty=True):
+            if item["id"] != project["id"] and int(item.get("setup_step") or 0) in {3, 4, 5}:
+                store.update_project(item["id"], setup_step=0)
+        updated = store.update_project(project["id"], setup_step=4)
+        return serialize_project(updated or project)
 
     @app.put("/api/projects/active")
     def set_active_project(body: ActiveProjectBody) -> dict[str, Any]:
@@ -858,6 +865,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 fields[key] = value
         if body.complete is not None:
             fields["complete"] = body.complete
+            if body.complete:
+                fields["setup_step"] = 0
+        if body.setup_step is not None:
+            fields["setup_step"] = body.setup_step
         updated = store.update_project(project_id, **fields) if fields else project
         if updated is None:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -949,6 +960,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
             persona=briefing.get("persona") or "",
             avoid=briefing.get("avoid") or "",
             subreddits=briefing.get("subreddits") or [],
+            setup_step=5,
         )
         if updated is None:
             raise HTTPException(status_code=404, detail="Project not found")

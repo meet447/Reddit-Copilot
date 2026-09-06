@@ -130,6 +130,7 @@ export interface AppConfig {
   purpose?: ProjectPurpose;
   goals?: string[];
   projects?: ProjectSummary[];
+  setup_project?: Project | null;
 }
 
 export type ProjectPurpose = "product" | "personal" | "custom";
@@ -170,6 +171,7 @@ export interface Project {
   keywords: string[];
   search_queries: string[];
   complete: boolean;
+  setup_step?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -557,6 +559,7 @@ export function patchProject(
     subreddits: string[];
     keywords: string[];
     complete: boolean;
+    setup_step: number;
   }>,
 ): Promise<Project> {
   return request(`/api/projects/${id}`, {

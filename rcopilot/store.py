@@ -173,6 +173,7 @@ class Store:
         self._add_column_if_missing(conn, "drafts", "submission_id", "TEXT")
         self._add_column_if_missing(conn, "drafts", "project_id", "TEXT NOT NULL DEFAULT 'default'")
         self._add_column_if_missing(conn, "audit_events", "project_id", "TEXT")
+        self._add_column_if_missing(conn, "projects", "setup_step", "INTEGER NOT NULL DEFAULT 0")
         self._migrate_drafts_nullable_post_id(conn)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_drafts_project ON drafts(project_id, status)"
@@ -893,6 +894,17 @@ class Store:
             raise RuntimeError("Failed to create project")
         return project
 
+    def find_setup_project(self) -> dict[str, Any] | None:
+        """Most recently updated project still in the interview/review setup flow."""
+        in_setup: list[dict[str, Any]] = []
+        for project in self.list_projects(include_empty=True):
+            step = int(project.get("setup_step") or 0)
+            if step in {3, 4, 5}:
+                in_setup.append(project)
+        if not in_setup:
+            return None
+        return max(in_setup, key=lambda item: str(item.get("updated_at") or ""))
+
     def get_project(self, project_id: str) -> dict[str, Any] | None:
         conn = self.connect()
         row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -930,6 +942,7 @@ class Store:
             "search_queries",
             "queries_fingerprint",
             "complete",
+            "setup_step",
         }
         unknown = set(fields) - allowed
         if unknown:
@@ -951,6 +964,8 @@ class Store:
                 payload[key] = json.dumps(payload[key])
         if "complete" in payload:
             payload["complete"] = 1 if payload["complete"] else 0
+        if "setup_step" in payload:
+            payload["setup_step"] = int(payload["setup_step"] or 0)
         payload["updated_at"] = _utc_now_iso()
 
         columns = ", ".join(f"{key} = ?" for key in payload)
@@ -990,6 +1005,7 @@ class Store:
         ):
             data[key] = Store._parse_json_list(data.get(key))
         data["complete"] = bool(data.get("complete", 0))
+        data["setup_step"] = int(data.get("setup_step") or 0)
         return data
 
     @staticmethod

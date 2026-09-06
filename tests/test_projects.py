@@ -106,6 +106,8 @@ def test_projects_api_create_and_active(tmp_path: Path) -> None:
     assert data["purpose"] == "personal"
     assert data["interview_messages"]
     assert data["interview_messages"][0]["role"] == "assistant"
+    assert data["setup_step"] == 4
+    assert client.get("/api/config").json()["setup_project"]["id"] == data["id"]
 
     listed = client.get("/api/projects")
     assert listed.status_code == 200
@@ -153,6 +155,20 @@ def test_complete_project_extracts_briefing(
     assert data["briefing"] == "Acme is a notes app."
     assert data["goals"] == ["helpful comments"]
     assert data["subreddits"] == ["productivity"]
+    assert data["setup_step"] == 5
+
+    config = client.get("/api/config").json()
+    setup = config.get("setup_project") or {}
+    assert setup.get("id") == created["id"]
+    assert setup.get("setup_step") == 5
+    assert setup.get("briefing") == "Acme is a notes app."
+
+    finished = client.patch(
+        f"/api/projects/{created['id']}", json={"complete": True}
+    )
+    assert finished.status_code == 200
+    assert finished.json()["setup_step"] == 0
+    assert client.get("/api/config").json().get("setup_project") is None
 
 
 def test_posts_and_drafts_api_honor_active_project(tmp_path: Path) -> None:

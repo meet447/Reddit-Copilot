@@ -15,6 +15,7 @@ import {
   startOAuth,
   streamInterview,
   type InterviewMessage,
+  type Project,
   type ProjectLink,
   type ProjectPurpose,
 } from "@/lib/api";
@@ -104,6 +105,22 @@ function messagesWithOpening(
   return [{ role: "assistant", content: OPENINGS[purpose] }, ...messages];
 }
 
+function workspaceStep(project: Project, fallback: number): number {
+  const saved = project.setup_step ?? 0;
+  if (saved === 3 || saved === 4 || saved === 5) return saved;
+  if (
+    (project.briefing || "").trim() &&
+    (project.subreddits?.length ?? 0) > 0 &&
+    !project.complete
+  ) {
+    return 5;
+  }
+  if ((project.interview_messages ?? []).some((item) => item.role === "user")) {
+    return 4;
+  }
+  return fallback;
+}
+
 function clampStep(value: number | undefined, max: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(Math.trunc(value as number), max));
@@ -153,8 +170,23 @@ export function OnboardingFlow() {
 
   useEffect(() => {
     let cancelled = false;
+
+    function hydrate(project: Project) {
+      setProjectId(project.id);
+      setPurpose(project.purpose);
+      setMessages(
+        messagesWithOpening(project.purpose, project.interview_messages ?? []),
+      );
+      setResearched(project.links ?? []);
+      setWorkspaceName(project.name);
+      setBriefing(project.briefing);
+      setGoals(project.goals ?? []);
+      setSubreddits(project.subreddits ?? []);
+      setKeywords(project.keywords ?? []);
+    }
+
     getConfig()
-      .then((config) => {
+      .then(async (config) => {
         if (cancelled) return;
         if (config.oauth_redirect_uri) setRedirectUri(config.oauth_redirect_uri);
         const account = config.accounts?.[0];
@@ -174,28 +206,39 @@ export function OnboardingFlow() {
 
         const reddit = searchParams.get("reddit");
         let nextStep = clampStep(config.onboarding_step, STEPS.length - 1);
+        let project = config.setup_project ?? null;
+
         if (isRerun && readyAccount && config.active_project_id) {
-          nextStep = 4;
-          void getProject(config.active_project_id)
-            .then((project) => {
+          if (!project || project.id !== config.active_project_id) {
+            project = await getProject(config.active_project_id);
+          }
+          if (cancelled) return;
+          if (project) {
+            if ((project.setup_step ?? 0) === 0) {
+              await patchProject(project.id, { setup_step: 4 });
               if (cancelled) return;
-              setProjectId(project.id);
-              setPurpose(project.purpose);
-              setMessages(
-                messagesWithOpening(
-                  project.purpose,
-                  project.interview_messages ?? [],
-                ),
-              );
-              setResearched(project.links ?? []);
-            })
-            .catch(() => {
-              if (!cancelled) setError("Could not load this workspace.");
-            });
+              project = { ...project, setup_step: 4 };
+            }
+            hydrate(project);
+            nextStep = workspaceStep(project, 4);
+          } else {
+            nextStep = 4;
+          }
         } else if (isNewProject && readyAccount) {
-          nextStep = ACCOUNT_STEPS;
-        } else if (readyAccount && nextStep < ACCOUNT_STEPS) {
-          nextStep = ACCOUNT_STEPS;
+          if (project) {
+            hydrate(project);
+            nextStep = workspaceStep(project, ACCOUNT_STEPS);
+          } else {
+            nextStep = ACCOUNT_STEPS;
+          }
+        } else {
+          if (readyAccount && nextStep < ACCOUNT_STEPS) {
+            nextStep = ACCOUNT_STEPS;
+          }
+          if (project) {
+            hydrate(project);
+            nextStep = Math.max(nextStep, workspaceStep(project, nextStep));
+          }
         }
         if (reddit === "connected" || reddit === "error") {
           nextStep = Math.max(nextStep, 1);
@@ -227,6 +270,13 @@ export function OnboardingFlow() {
         base_url: llmBaseUrl || undefined,
       },
     });
+  }
+
+  async function persistSetup(nextStep: number) {
+    await persistAccount(nextStep);
+    if (projectId && nextStep >= ACCOUNT_STEPS) {
+      await patchProject(projectId, { setup_step: nextStep });
+    }
   }
 
   async function saveSecretsIfPresent() {
@@ -321,7 +371,7 @@ export function OnboardingFlow() {
       setSubreddits(project.subreddits ?? []);
       setKeywords(project.keywords ?? []);
       setStep(5);
-      await persistAccount(5);
+      await persistSetup(5);
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Could not generate the workspace.",
@@ -381,10 +431,6 @@ export function OnboardingFlow() {
       setError("Choose what this workspace is for.");
       return;
     }
-    if (step === 4) {
-      await generateWorkspace();
-      return;
-    }
     if (step === 5) {
       if (subreddits.length === 0) {
         setError("Add at least one subreddit to continue.");
@@ -402,7 +448,7 @@ export function OnboardingFlow() {
         await startInterview(purpose);
       }
       const nextStep = step + 1;
-      await persistAccount(nextStep);
+      await persistSetup(nextStep);
       setStep(nextStep);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save this step.");
@@ -419,7 +465,7 @@ export function OnboardingFlow() {
     const nextStep = step - 1;
     setError(null);
     try {
-      await persistAccount(nextStep);
+      await persistSetup(nextStep);
       setStep(nextStep);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save this step.");
@@ -434,12 +480,7 @@ export function OnboardingFlow() {
     );
   }
 
-  const continueLabel =
-    step === 4
-      ? "Generate workspace"
-      : step === STEPS.length - 1
-        ? "Finish"
-        : "Continue";
+  const continueLabel = step === STEPS.length - 1 ? "Finish" : "Continue";
   const isInterview = step === 4;
 
   return (
@@ -708,17 +749,23 @@ export function OnboardingFlow() {
       <footer className="fixed bottom-0 left-0 right-0 flex items-center justify-between border-t border-line bg-surface px-6 py-4">
         <Button
           variant="ghost"
-          disabled={step <= firstVisible && !isNewProject && !isRerun}
+          disabled={
+            generating || (step <= firstVisible && !isNewProject && !isRerun)
+          }
           onClick={() => void handleBack()}
         >
           {step <= firstVisible && (isNewProject || isRerun) ? "Cancel" : "Back"}
         </Button>
-        <Button
-          loading={loading || generating}
-          onClick={() => void handleContinue()}
-        >
-          {continueLabel}
-        </Button>
+        {!isInterview ? (
+          <Button
+            loading={loading || generating}
+            onClick={() => void handleContinue()}
+          >
+            {continueLabel}
+          </Button>
+        ) : (
+          <div className="w-8" />
+        )}
       </footer>
     </div>
   );

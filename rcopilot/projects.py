@@ -143,6 +143,7 @@ def serialize_project(project: dict[str, Any]) -> dict[str, Any]:
         "keywords": list(project.get("keywords") or []),
         "search_queries": list(project.get("search_queries") or []),
         "complete": bool(project.get("complete")),
+        "setup_step": int(project.get("setup_step") or 0),
         "created_at": project.get("created_at"),
         "updated_at": project.get("updated_at"),
     }
