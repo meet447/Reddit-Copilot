@@ -99,6 +99,7 @@ export interface AppConfig {
     interval_seconds: number;
   };
   onboarding_complete: boolean;
+  onboarding_step: number;
   has_credentials: boolean;
   has_oauth: boolean;
   has_api_key: boolean;
@@ -119,6 +120,7 @@ export type ConfigUpdate = {
   llm?: { base_url?: string; model?: string };
   prompt_template?: string;
   onboarding_complete?: boolean;
+  onboarding_step?: number;
 };
 
 export type SecretsUpdate = {

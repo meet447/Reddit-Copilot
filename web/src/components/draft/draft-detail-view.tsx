@@ -177,7 +177,7 @@ export function DraftDetailView({ id }: { id: number }) {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       <header className="flex shrink-0 items-center justify-between gap-4 border-b border-line px-6 py-4">
         <div className="flex items-center gap-3 min-w-0">
           <Link href="/queue">
@@ -220,8 +220,8 @@ export function DraftDetailView({ id }: { id: number }) {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col border-r border-line">
-          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-line">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 px-6 py-5">
             {message && <Notice tone="sage">{message}</Notice>}
             {(error || draft.error) && (
               <Notice tone="clay">
@@ -238,16 +238,19 @@ export function DraftDetailView({ id }: { id: number }) {
               </Notice>
             )}
 
-            <Field>
-              <Label htmlFor="draft-body">Your reply</Label>
-              <Textarea
-                ref={editorRef}
-                id="draft-body"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                rows={12}
-                className="min-h-[240px] text-[15px]"
-              />
+            <Field className="flex min-h-0 flex-1 flex-col">
+              <Label htmlFor="draft-body" className="shrink-0">
+                Your reply
+              </Label>
+              <div className="relative min-h-0 flex-1">
+                <Textarea
+                  ref={editorRef}
+                  id="draft-body"
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  className="absolute inset-0 h-full min-h-0 resize-none overflow-y-auto text-[15px]"
+                />
+              </div>
             </Field>
           </div>
 

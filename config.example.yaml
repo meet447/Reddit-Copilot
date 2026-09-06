@@ -33,6 +33,7 @@ worker:
   interval_seconds: 300
 
 onboarding_complete: false
+onboarding_step: 0
 
 # Must match the Reddit web app redirect URI exactly
 oauth_redirect_uri: http://127.0.0.1:8000/api/oauth/callback

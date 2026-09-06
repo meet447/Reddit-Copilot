@@ -90,6 +90,7 @@ class AppConfig:
     worker: WorkerConfig
     prompt_template: str
     onboarding_complete: bool = False
+    onboarding_step: int = 0
     oauth_redirect_uri: str = "http://127.0.0.1:8000/api/oauth/callback"
     frontend_url: str = "http://localhost:3000"
 
@@ -104,6 +105,14 @@ def env_secret_key(account_name: str, suffix: str) -> str:
     if account_name == "default":
         return f"REDDIT_{suffix}"
     return f"{_env_account_prefix(account_name)}_{suffix}"
+
+
+def _clamp_onboarding_step(value: Any) -> int:
+    try:
+        step = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(step, 4))
 
 
 def _fill_account_secrets(account: Account, env: dict[str, str | None]) -> None:
@@ -181,6 +190,7 @@ def load_config(path: str | Path) -> AppConfig:
         worker=WorkerConfig(interval_seconds=int(worker_raw.get("interval_seconds", 300))),
         prompt_template=str(raw.get("prompt_template") or DEFAULT_PROMPT_TEMPLATE),
         onboarding_complete=bool(raw.get("onboarding_complete", False)),
+        onboarding_step=_clamp_onboarding_step(raw.get("onboarding_step", 0)),
         oauth_redirect_uri=str(
             raw.get("oauth_redirect_uri") or "http://127.0.0.1:8000/api/oauth/callback"
         ),
@@ -204,6 +214,7 @@ def _config_to_yaml_dict(config: AppConfig, *, include_secrets: bool = False) ->
         "discovery": asdict(config.discovery),
         "worker": asdict(config.worker),
         "onboarding_complete": config.onboarding_complete,
+        "onboarding_step": config.onboarding_step,
         "oauth_redirect_uri": config.oauth_redirect_uri,
         "frontend_url": config.frontend_url,
     }

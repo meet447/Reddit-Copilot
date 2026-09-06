@@ -95,6 +95,7 @@ class ConfigUpdateBody(BaseModel):
     llm: dict[str, str] | None = None
     prompt_template: str | None = None
     onboarding_complete: bool | None = None
+    onboarding_step: int | None = None
 
 
 class SecretsBody(BaseModel):
@@ -444,6 +445,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
             config.prompt_template = body.prompt_template
         if body.onboarding_complete is not None:
             config.onboarding_complete = body.onboarding_complete
+        if body.onboarding_step is not None:
+            config.onboarding_step = max(0, min(int(body.onboarding_step), 4))
 
         save_config(resolved_path, config)
         return sanitize_config(config)

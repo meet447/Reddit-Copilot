@@ -74,3 +74,37 @@ def test_oauth_callback_rejects_bad_state(client: TestClient) -> None:
     location = response.headers["location"]
     assert "reddit=error" in location
     assert "onboarding" in location
+
+
+def test_onboarding_progress_persists(client: TestClient) -> None:
+    response = client.put(
+        "/api/config",
+        json={
+            "onboarding_step": 2,
+            "voice": {
+                "product": "Reddit Copilot",
+                "tone": "Helpful and direct",
+                "persona": "Founder in the comments",
+            },
+            "subreddits": ["startups", "SaaS"],
+            "discovery": {"keywords": ["looking for", "recommend"]},
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["onboarding_step"] == 2
+    assert data["voice"]["product"] == "Reddit Copilot"
+    assert data["subreddits"] == ["startups", "SaaS"]
+    assert data["discovery"]["keywords"] == ["looking for", "recommend"]
+
+    reload = client.get("/api/config")
+    assert reload.status_code == 200
+    saved = reload.json()
+    assert saved["onboarding_step"] == 2
+    assert saved["voice"]["tone"] == "Helpful and direct"
+
+
+def test_onboarding_step_clamps(client: TestClient) -> None:
+    response = client.put("/api/config", json={"onboarding_step": 99})
+    assert response.status_code == 200
+    assert response.json()["onboarding_step"] == 4

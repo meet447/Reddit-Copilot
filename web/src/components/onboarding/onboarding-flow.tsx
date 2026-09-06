@@ -8,6 +8,8 @@ import {
   putSecrets,
   startOAuth,
   fetchThreads,
+  type AppConfig,
+  type ConfigUpdate,
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
@@ -43,14 +45,29 @@ const STEPS = [
   },
 ];
 
+function splitCsv(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function clampStep(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(Math.trunc(value as number), STEPS.length - 1));
+}
+
 export function OnboardingFlow() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [step, setStep] = useState(0);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectedName, setConnectedName] = useState("");
+  const [hasClientId, setHasClientId] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(false);
   const [redirectUri, setRedirectUri] = useState(
     "http://127.0.0.1:8000/api/oauth/callback",
   );
@@ -66,71 +83,120 @@ export function OnboardingFlow() {
   const [llmBaseUrl, setLlmBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
 
-  useEffect(() => {
-    getConfig()
-      .then((config) => {
-        if (config.oauth_redirect_uri) setRedirectUri(config.oauth_redirect_uri);
-        const account = config.accounts?.[0];
-        if (account?.has_oauth && account.connected_username) {
-          setConnectedName(account.connected_username);
-        }
-      })
-      .catch(() => {
-        // API down — keep defaults
-      });
-  }, []);
+  function applyConfig(config: AppConfig) {
+    if (config.oauth_redirect_uri) setRedirectUri(config.oauth_redirect_uri);
+    const account = config.accounts?.[0];
+    setHasClientId(Boolean(account?.has_client_id));
+    setHasApiKey(Boolean(config.has_api_key));
+    if (account?.connected_username) {
+      setConnectedName(account.connected_username);
+    } else if (account?.has_oauth) {
+      setConnectedName("your account");
+    }
+    setProductDesc(config.voice?.product ?? "");
+    setTone(config.voice?.tone ?? "");
+    setPersona(config.voice?.persona ?? "");
+    setSubreddits((config.subreddits ?? []).join(", "));
+    setKeywords((config.discovery?.keywords ?? []).join(", "));
+    if (config.llm?.model) setLlmModel(config.llm.model);
+    setLlmBaseUrl(config.llm?.base_url ?? "");
+  }
+
+  async function persist(nextStep: number, extra?: ConfigUpdate) {
+    await putConfig({
+      onboarding_step: nextStep,
+      subreddits: splitCsv(subreddits),
+      voice: {
+        product: productDesc,
+        tone,
+        persona,
+      },
+      discovery: {
+        keywords: splitCsv(keywords),
+      },
+      llm: {
+        model: llmModel,
+        base_url: llmBaseUrl || undefined,
+      },
+      ...extra,
+    });
+  }
 
   useEffect(() => {
-    const status = searchParams.get("reddit");
-    if (status === "connected") {
-      setStep(1);
-      getConfig()
-        .then((config) => {
-          const account = config.accounts?.[0];
-          setConnectedName(account?.connected_username ?? "your account");
-        })
-        .catch(() => setConnectedName("your account"));
-    }
-    if (status === "error") {
-      setStep(1);
-      setError(
-        searchParams.get("reason") ||
-          "Reddit connection didn’t finish. Check the redirect URI and try again.",
-      );
-    }
+    let cancelled = false;
+    getConfig()
+      .then((config) => {
+        if (cancelled) return;
+        applyConfig(config);
+        const reddit = searchParams.get("reddit");
+        let nextStep = clampStep(config.onboarding_step);
+        if (reddit === "connected" || reddit === "error") {
+          nextStep = Math.max(nextStep, 1);
+        }
+        setStep(nextStep);
+        if (reddit === "error") {
+          setError(
+            searchParams.get("reason") ||
+              "Reddit connection didn’t finish. Check the redirect URI and try again.",
+          );
+        }
+        setReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const timer = window.setTimeout(() => {
+      void persist(step);
+    }, 500);
+    return () => window.clearTimeout(timer);
+    // persist reads the latest field state from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    ready,
+    step,
+    productDesc,
+    tone,
+    persona,
+    subreddits,
+    keywords,
+    llmModel,
+    llmBaseUrl,
+  ]);
+
+  async function saveSecretsIfPresent() {
+    const secrets: {
+      reddit_client_id?: string;
+      reddit_client_secret?: string;
+      llm_api_key?: string;
+    } = {};
+    if (clientId.trim()) secrets.reddit_client_id = clientId.trim();
+    if (clientSecret.trim()) secrets.reddit_client_secret = clientSecret.trim();
+    if (apiKey.trim()) secrets.llm_api_key = apiKey.trim();
+    if (Object.keys(secrets).length === 0) return;
+    await putSecrets(secrets);
+    if (secrets.reddit_client_id || secrets.reddit_client_secret) {
+      setHasClientId(true);
+    }
+    if (secrets.llm_api_key) {
+      setHasApiKey(true);
+      setApiKey("");
+    }
+  }
 
   async function finish() {
     setLoading(true);
     setError(null);
     try {
-      await putConfig({
-        onboarding_complete: true,
-        subreddits: subreddits
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        voice: {
-          product: productDesc,
-          tone,
-          persona,
-        },
-        discovery: {
-          keywords: keywords
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        },
-        llm: {
-          model: llmModel,
-          base_url: llmBaseUrl || undefined,
-        },
-      });
-
-      if (apiKey) {
-        await putSecrets({ llm_api_key: apiKey });
-      }
-
+      await saveSecretsIfPresent();
+      await persist(STEPS.length - 1, { onboarding_complete: true });
       try {
         await fetchThreads();
       } catch {
@@ -146,50 +212,69 @@ export function OnboardingFlow() {
 
   async function handleContinue() {
     if (step === 0) {
-      if (!clientId.trim() || !clientSecret.trim()) {
+      if (!clientId.trim() && !clientSecret.trim() && !hasClientId) {
         setError("Paste your Reddit client ID and secret to continue.");
         return;
       }
-      setLoading(true);
-      setError(null);
-      try {
-        await putSecrets({
-          reddit_client_id: clientId.trim(),
-          reddit_client_secret: clientSecret.trim(),
-        });
-        setStep(1);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not save app credentials.");
-      } finally {
-        setLoading(false);
+      if ((!clientId.trim() || !clientSecret.trim()) && !hasClientId) {
+        setError("Paste your Reddit client ID and secret to continue.");
+        return;
       }
-      return;
     }
     if (step === 1 && !connectedName) {
       setError("Connect Reddit before continuing.");
       return;
     }
-    if (step < STEPS.length - 1) {
-      setStep(step + 1);
-      return;
+    setLoading(true);
+    setError(null);
+    try {
+      await saveSecretsIfPresent();
+      if (step < STEPS.length - 1) {
+        const nextStep = step + 1;
+        await persist(nextStep);
+        setStep(nextStep);
+        return;
+      }
+      await finish();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save this step.");
+    } finally {
+      setLoading(false);
     }
-    await finish();
+  }
+
+  async function handleBack() {
+    if (step === 0) return;
+    const nextStep = step - 1;
+    setError(null);
+    try {
+      await persist(nextStep);
+      setStep(nextStep);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save this step.");
+    }
   }
 
   async function handleConnect() {
     setConnecting(true);
     setError(null);
     try {
-      await putSecrets({
-        reddit_client_id: clientId.trim(),
-        reddit_client_secret: clientSecret.trim(),
-      });
+      await saveSecretsIfPresent();
+      await persist(1);
       const { authorize_url } = await startOAuth("/onboarding");
       window.location.href = authorize_url;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start Reddit sign-in.");
       setConnecting(false);
     }
+  }
+
+  if (!ready) {
+    return (
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-surface">
+        <Mascot mood="thinking" />
+      </div>
+    );
   }
 
   const current = STEPS[step];
@@ -230,13 +315,23 @@ export function OnboardingFlow() {
 
             {step === 0 && (
               <>
+                {hasClientId && (
+                  <Notice tone="sage">
+                    App credentials are already saved. Leave the fields blank to
+                    keep them.
+                  </Notice>
+                )}
                 <Field>
                   <Label htmlFor="ob-client-id">Reddit client ID</Label>
                   <Input
                     id="ob-client-id"
                     value={clientId}
                     onChange={(e) => setClientId(e.target.value)}
-                    placeholder="From reddit.com/prefs/apps"
+                    placeholder={
+                      hasClientId
+                        ? "Leave blank to keep current"
+                        : "From reddit.com/prefs/apps"
+                    }
                   />
                 </Field>
                 <Field>
@@ -246,6 +341,7 @@ export function OnboardingFlow() {
                     type="password"
                     value={clientSecret}
                     onChange={(e) => setClientSecret(e.target.value)}
+                    placeholder={hasClientId ? "Leave blank to keep current" : undefined}
                   />
                   <Hint>Create a web app. Redirect URI must match exactly:</Hint>
                 </Field>
@@ -333,6 +429,11 @@ export function OnboardingFlow() {
 
             {step === 4 && (
               <>
+                {hasApiKey && (
+                  <Notice tone="sage">
+                    An LLM key is already saved. Leave the key blank to keep it.
+                  </Notice>
+                )}
                 <Field>
                   <Label htmlFor="ob-model">Model</Label>
                   <Input
@@ -357,6 +458,7 @@ export function OnboardingFlow() {
                     type="password"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={hasApiKey ? "Leave blank to keep current" : undefined}
                   />
                 </Field>
                 <Notice tone="accent">
@@ -369,11 +471,7 @@ export function OnboardingFlow() {
       </main>
 
       <footer className="fixed bottom-0 left-0 right-0 flex items-center justify-between px-6 py-4 bg-surface border-t border-line">
-        <Button
-          variant="ghost"
-          disabled={step === 0}
-          onClick={() => setStep(step - 1)}
-        >
+        <Button variant="ghost" disabled={step === 0} onClick={handleBack}>
           Back
         </Button>
         <Button loading={loading} onClick={handleContinue}>
