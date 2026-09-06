@@ -9,8 +9,13 @@ export default async function HomePage() {
   try {
     const res = await fetch(`${api}/api/config`, { cache: "no-store" });
     if (res.ok) {
-      const config = (await res.json()) as { onboarding_complete?: boolean };
-      onboardingComplete = Boolean(config.onboarding_complete);
+      const config = (await res.json()) as {
+        onboarding_complete?: boolean;
+        projects?: { id: string }[];
+      };
+      onboardingComplete =
+        Boolean(config.onboarding_complete) &&
+        Boolean(config.projects && config.projects.length > 0);
     }
   } catch {
     // API down — send first-run users to onboarding

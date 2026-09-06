@@ -9,6 +9,7 @@ import {
   startOAuth,
   suggestSubreddits,
   type AppConfig,
+  type ProjectPurpose,
   type SecretsUpdate,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,8 @@ export function SettingsSheet({
   const [tone, setTone] = useState("");
   const [persona, setPersona] = useState("");
   const [avoid, setAvoid] = useState("");
+  const [goals, setGoals] = useState<string[]>([]);
+  const [purpose, setPurpose] = useState<ProjectPurpose>("product");
   const [subreddits, setSubreddits] = useState<string[]>([]);
   const [keywords, setKeywords] = useState<string[]>([]);
   const [dailyCap, setDailyCap] = useState("");
@@ -87,6 +90,8 @@ export function SettingsSheet({
         setTone(c.voice?.tone ?? "");
         setPersona(c.voice?.persona ?? "");
         setAvoid(c.voice?.avoid ?? "");
+        setGoals(c.goals ?? []);
+        setPurpose(c.purpose ?? "product");
         setSubreddits(c.subreddits ?? []);
         setKeywords(c.discovery?.keywords ?? []);
         setSearchQueries((c.discovery?.search_queries ?? []).join("\n"));
@@ -136,6 +141,8 @@ export function SettingsSheet({
           persona,
           avoid,
         },
+        goals,
+        purpose,
         discovery: {
           keywords,
         },
@@ -317,12 +324,27 @@ export function SettingsSheet({
             {loaded && section === "voice" && (
               <>
                 <Field>
-                  <Label htmlFor="product-desc">Product description</Label>
+                  <Label htmlFor="product-desc">
+                    {purpose === "personal"
+                      ? "About you"
+                      : purpose === "custom"
+                        ? "Aim"
+                        : "Product description"}
+                  </Label>
                   <Textarea
                     id="product-desc"
                     value={productDesc}
                     onChange={(e) => setProductDesc(e.target.value)}
                     rows={4}
+                  />
+                </Field>
+                <Field>
+                  <Label htmlFor="goals">Goals</Label>
+                  <TagInput
+                    id="goals"
+                    values={goals}
+                    onChange={setGoals}
+                    placeholder="Add a goal and press Enter"
                   />
                 </Field>
                 <Field>
@@ -352,6 +374,20 @@ export function SettingsSheet({
                     placeholder="Hard sells, hype, asking for upvotes"
                   />
                 </Field>
+                <div className="flex flex-wrap gap-4">
+                  <a
+                    href="/onboarding?briefing=1"
+                    className="inline-flex text-[13px] text-ink-2 underline-offset-2 hover:text-ink hover:underline"
+                  >
+                    Re-run briefing
+                  </a>
+                  <a
+                    href="/onboarding?new=1"
+                    className="inline-flex text-[13px] text-ink-2 underline-offset-2 hover:text-ink hover:underline"
+                  >
+                    New project
+                  </a>
+                </div>
               </>
             )}
 
@@ -374,6 +410,8 @@ export function SettingsSheet({
                             product: productDesc,
                             tone,
                             persona,
+                            purpose,
+                            goals,
                           });
                           setSubreddits(data.subreddits ?? []);
                         } catch (e) {
@@ -418,7 +456,7 @@ export function SettingsSheet({
                       rows={6}
                     />
                     <Hint>
-                      Generated from your product and keywords. Refreshed on fetch
+                      Generated from your briefing and keywords. Refreshed on fetch
                       when those change.
                     </Hint>
                   </Field>

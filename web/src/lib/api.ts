@@ -126,6 +126,51 @@ export interface AppConfig {
   oauth_redirect_uri: string;
   frontend_url: string;
   prompt_template?: string;
+  active_project_id?: string;
+  purpose?: ProjectPurpose;
+  goals?: string[];
+  projects?: ProjectSummary[];
+}
+
+export type ProjectPurpose = "product" | "personal" | "custom";
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  purpose: ProjectPurpose;
+  complete: boolean;
+}
+
+export interface ProjectLink {
+  url: string;
+  title?: string;
+  excerpt?: string;
+  ok?: boolean;
+  error?: string | null;
+}
+
+export interface InterviewMessage {
+  role: "assistant" | "user" | "system";
+  content: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  purpose: ProjectPurpose;
+  briefing: string;
+  goals: string[];
+  links: ProjectLink[];
+  interview_messages: InterviewMessage[];
+  tone: string;
+  persona: string;
+  avoid: string;
+  subreddits: string[];
+  keywords: string[];
+  search_queries: string[];
+  complete: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export type ConfigUpdate = {
@@ -141,6 +186,9 @@ export type ConfigUpdate = {
   prompt_template?: string;
   onboarding_complete?: boolean;
   onboarding_step?: number;
+  active_project_id?: string;
+  purpose?: ProjectPurpose;
+  goals?: string[];
 };
 
 export type SecretsUpdate = {
@@ -284,6 +332,8 @@ export function suggestSubreddits(input?: {
   tone?: string;
   persona?: string;
   count?: number;
+  purpose?: ProjectPurpose;
+  goals?: string[];
 }): Promise<{ subreddits: string[] }> {
   return request("/api/subreddits/suggest", {
     method: "POST",
@@ -292,6 +342,8 @@ export function suggestSubreddits(input?: {
       tone: input?.tone,
       persona: input?.persona,
       count: input?.count ?? 12,
+      purpose: input?.purpose,
+      goals: input?.goals,
     }),
   });
 }
@@ -472,4 +524,117 @@ export function startOAuth(
     method: "POST",
     body: JSON.stringify({ next, account_name: accountName }),
   });
+}
+
+export function listProjects(): Promise<{
+  projects: ProjectSummary[];
+  active_project_id: string;
+}> {
+  return request("/api/projects");
+}
+
+export function createProject(purpose: ProjectPurpose, name?: string): Promise<Project> {
+  return request("/api/projects", {
+    method: "POST",
+    body: JSON.stringify({ purpose, name }),
+  });
+}
+
+export function getProject(id: string): Promise<Project> {
+  return request(`/api/projects/${id}`);
+}
+
+export function patchProject(
+  id: string,
+  body: Partial<{
+    name: string;
+    briefing: string;
+    goals: string[];
+    tone: string;
+    persona: string;
+    avoid: string;
+    subreddits: string[];
+    keywords: string[];
+    complete: boolean;
+  }>,
+): Promise<Project> {
+  return request(`/api/projects/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function setActiveProject(id: string): Promise<AppConfig> {
+  return request("/api/projects/active", {
+    method: "PUT",
+    body: JSON.stringify({ id }),
+  });
+}
+
+export function completeProject(id: string): Promise<Project> {
+  return request(`/api/projects/${id}/complete`, { method: "POST" });
+}
+
+export async function streamInterview(
+  projectId: string,
+  message: string,
+  onDelta: (delta: string) => void,
+  onResearch?: (items: ProjectLink[]) => void,
+): Promise<InterviewMessage> {
+  const res = await fetch(`/api/projects/${projectId}/interview`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    },
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) {
+    let messageText = `Request failed (${res.status})`;
+    try {
+      const data = (await res.json()) as { error?: string; detail?: string };
+      if (data.error) messageText = data.error;
+      else if (typeof data.detail === "string") messageText = data.detail;
+    } catch {
+      // ignore
+    }
+    throw new ApiError(messageText, res.status);
+  }
+  if (!res.body) {
+    throw new ApiError("No stream from API", res.status || 500);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let reply: InterviewMessage | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const line = chunk.split("\n").find((entry) => entry.startsWith("data: "));
+      if (!line) continue;
+      const payload = JSON.parse(line.slice(6)) as {
+        delta?: string;
+        done?: boolean;
+        message?: InterviewMessage;
+        research?: ProjectLink[];
+        error?: string;
+      };
+      if (payload.error) throw new ApiError(payload.error, 400);
+      if (payload.research?.length) onResearch?.(payload.research);
+      if (payload.delta) onDelta(payload.delta);
+      if (payload.done && payload.message) reply = payload.message;
+    }
+  }
+
+  if (!reply) {
+    throw new ApiError("Stream ended without a reply", 500);
+  }
+  return reply;
 }

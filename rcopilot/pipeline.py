@@ -19,8 +19,9 @@ from rcopilot.llm import (
     generate_submission,
     iter_comment_deltas,
 )
+from rcopilot.projects import persist_queries_to_project
 from rcopilot.scoring import apply_scores
-from rcopilot.store import Store
+from rcopilot.store import DEFAULT_PROJECT_ID, Store
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +37,17 @@ def _resolve_account(config: AppConfig, account_name: str | None) -> Account:
     return config.accounts[0]
 
 
+def _project_id(config: AppConfig) -> str:
+    return (config.active_project_id or "").strip() or DEFAULT_PROJECT_ID
+
+
 def _voice_kwargs(config: AppConfig) -> dict[str, str]:
     return {
         "product": config.voice.product,
         "tone": config.voice.tone,
         "persona": config.voice.persona,
         "avoid": config.voice.avoid,
+        "goals": "; ".join(config.goals) if config.goals else "",
     }
 
 
@@ -51,6 +57,8 @@ def _queries_fingerprint(config: AppConfig) -> str:
         "persona": config.voice.persona,
         "keywords": config.discovery.keywords,
         "subreddits": config.subreddits,
+        "purpose": config.purpose,
+        "goals": config.goals,
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -76,6 +84,8 @@ def ensure_search_queries(
                 keywords=config.discovery.keywords,
                 subreddits=config.subreddits,
                 persona=config.voice.persona,
+                purpose=config.purpose,
+                goals=config.goals,
             )
         except Exception:
             logger.exception("LLM search-query generation failed; using fallback queries")
@@ -109,12 +119,12 @@ def fetch_and_store(
     if not account.refresh_token and not (account.username and account.password):
         raise ValueError("Reddit is not connected. Use Connect Reddit in onboarding or Settings.")
     reddit = reddit_client.get_reddit(account)
+    project_id = _project_id(config)
 
-    existing_ids = {
-        row["id"] for row in store.connect().execute("SELECT id FROM posts").fetchall()
-    }
+    existing_ids = store.list_post_ids(project_id=project_id)
 
     queries = ensure_search_queries(config, config_path=config_path)
+    persist_queries_to_project(store, config)
     fetched = reddit_client.fetch_posts(
         reddit,
         config.subreddits,
@@ -141,15 +151,22 @@ def fetch_and_store(
     stored_posts: list[dict[str, Any]] = []
     for post in merged:
         is_new = post["id"] not in existing_ids
-        store.upsert_post(**post)
-        stored_posts.append(store.get_post(post["id"]) or post)
+        store.upsert_post(**post, project_id=project_id)
+        stored_posts.append(store.get_post(post["id"], project_id=project_id) or post)
         if is_new:
             existing_ids.add(post["id"])
             new_count += 1
 
-    apply_scores(store, stored_posts, config.discovery, product=config.voice.product)
+    apply_scores(
+        store,
+        stored_posts,
+        config.discovery,
+        product=config.voice.product,
+        project_id=project_id,
+    )
     store.add_audit(
         "fetched",
+        project_id=project_id,
         detail={
             "new_count": new_count,
             "total": len(stored_posts),
@@ -179,7 +196,12 @@ def _generate_draft_body(config: AppConfig, post: dict[str, Any]) -> str:
 
 
 def _eligible_posts_for_drafting(store: Store, config: AppConfig) -> list[dict[str, Any]]:
-    posts = store.list_posts(undrafted=True, skipped=False, min_score=config.discovery.min_score)
+    posts = store.list_posts(
+        project_id=_project_id(config),
+        undrafted=True,
+        skipped=False,
+        min_score=config.discovery.min_score,
+    )
     return posts
 
 
@@ -195,15 +217,25 @@ def draft_pending(config: AppConfig, store: Store, account_name: str | None = No
     for post in posts:
         try:
             body = _generate_draft_body(config, post)
-            draft_id = store.create_draft(post["id"], account.name, body, status="pending")
-            store.add_audit("drafted", draft_id=draft_id, post_id=post["id"])
+            draft_id = store.create_draft(
+                post["id"], account.name, body, status="pending", project_id=_project_id(config)
+            )
+            store.add_audit("drafted", draft_id=draft_id, post_id=post["id"], project_id=_project_id(config))
             created += 1
             logger.info("Drafted comment for post %s", post["id"])
         except Exception as exc:
             logger.exception("LLM draft failed for post %s: %s", post["id"], exc)
-            draft_id = store.create_draft(post["id"], account.name, "", status="error")
+            draft_id = store.create_draft(
+                post["id"], account.name, "", status="error", project_id=_project_id(config)
+            )
             store.update_draft(draft_id, error=str(exc))
-            store.add_audit("draft_error", draft_id=draft_id, post_id=post["id"], detail={"error": str(exc)})
+            store.add_audit(
+                "draft_error",
+                draft_id=draft_id,
+                post_id=post["id"],
+                project_id=_project_id(config),
+                detail={"error": str(exc)},
+            )
 
     logger.info("Created %d draft(s)", created)
     return created
@@ -212,15 +244,13 @@ def draft_pending(config: AppConfig, store: Store, account_name: str | None = No
 def draft_one(config: AppConfig, store: Store, post_id: str, account_name: str | None = None) -> int:
     """Generate an LLM draft for a single post (CLI / legacy). Prefer queue_post + stream in the UI."""
     store.ensure_schema()
-    post = store.get_post(post_id)
+    project_id = _project_id(config)
+    post = store.get_post(post_id, project_id=project_id)
     if post is None:
         raise ValueError(f"Post not found: {post_id}")
     if post.get("skipped"):
         raise ValueError(f"Post {post_id} is skipped")
-    existing = store.connect().execute(
-        "SELECT id FROM drafts WHERE post_id = ?", (post_id,)
-    ).fetchone()
-    if existing:
+    if store.draft_exists_for_post(post_id, project_id=project_id):
         raise ValueError(f"Post {post_id} already has a draft")
 
     account = _resolve_account(config, account_name)
@@ -229,33 +259,37 @@ def draft_one(config: AppConfig, store: Store, post_id: str, account_name: str |
 
     try:
         body = _generate_draft_body(config, post)
-        draft_id = store.create_draft(post_id, account.name, body, status="pending")
-        store.add_audit("drafted", draft_id=draft_id, post_id=post_id)
+        draft_id = store.create_draft(post_id, account.name, body, status="pending", project_id=project_id)
+        store.add_audit("drafted", draft_id=draft_id, post_id=post_id, project_id=project_id)
         return draft_id
     except Exception as exc:
-        draft_id = store.create_draft(post_id, account.name, "", status="error")
+        draft_id = store.create_draft(post_id, account.name, "", status="error", project_id=project_id)
         store.update_draft(draft_id, error=str(exc))
-        store.add_audit("draft_error", draft_id=draft_id, post_id=post_id, detail={"error": str(exc)})
+        store.add_audit(
+            "draft_error",
+            draft_id=draft_id,
+            post_id=post_id,
+            project_id=project_id,
+            detail={"error": str(exc)},
+        )
         raise
 
 
 def queue_post(config: AppConfig, store: Store, post_id: str, account_name: str | None = None) -> int:
     """Add a post to the review queue without generating a reply yet."""
     store.ensure_schema()
-    post = store.get_post(post_id)
+    project_id = _project_id(config)
+    post = store.get_post(post_id, project_id=project_id)
     if post is None:
         raise ValueError(f"Post not found: {post_id}")
     if post.get("skipped"):
         raise ValueError(f"Post {post_id} is skipped")
-    existing = store.connect().execute(
-        "SELECT id FROM drafts WHERE post_id = ?", (post_id,)
-    ).fetchone()
-    if existing:
+    if store.draft_exists_for_post(post_id, project_id=project_id):
         raise ValueError(f"Post {post_id} is already in the review queue")
 
     account = _resolve_account(config, account_name)
-    draft_id = store.create_draft(post_id, account.name, "", status="pending")
-    store.add_audit("queued", draft_id=draft_id, post_id=post_id)
+    draft_id = store.create_draft(post_id, account.name, "", status="pending", project_id=project_id)
+    store.add_audit("queued", draft_id=draft_id, post_id=post_id, project_id=project_id)
     logger.info("Queued post %s as draft %d", post_id, draft_id)
     return draft_id
 
@@ -302,13 +336,13 @@ def finish_draft_stream(
     return body
 
 
-def skip_post(store: Store, post_id: str) -> None:
+def skip_post(store: Store, post_id: str, *, project_id: str = DEFAULT_PROJECT_ID) -> None:
     """Mark a post as skipped."""
-    post = store.get_post(post_id)
+    post = store.get_post(post_id, project_id=project_id)
     if post is None:
         raise ValueError(f"Post not found: {post_id}")
-    store.update_post(post_id, skipped=1)
-    store.add_audit("skipped", post_id=post_id)
+    store.update_post(post_id, project_id=project_id, skipped=1)
+    store.add_audit("skipped", post_id=post_id, project_id=project_id)
 
 
 def regenerate_draft(config: AppConfig, store: Store, draft_id: int) -> None:
@@ -397,10 +431,12 @@ def create_submission_draft(
         subreddit=cleaned_sub,
         title=cleaned_title,
         body=cleaned_body,
+        project_id=_project_id(config),
     )
     store.add_audit(
         "submission_created",
         draft_id=draft_id,
+        project_id=_project_id(config),
         detail={"subreddit": cleaned_sub, "title": cleaned_title},
     )
     return draft_id
@@ -440,10 +476,12 @@ def generate_submission_ideas(
                 subreddit=subreddit,
                 title=title,
                 body=body,
+                project_id=_project_id(config),
             )
             store.add_audit(
                 "submission_generated",
                 draft_id=draft_id,
+                project_id=_project_id(config),
                 detail={"subreddit": subreddit, "title": title},
             )
             created_ids.append(draft_id)
@@ -743,8 +781,33 @@ def run_once(
     config_path: str | Path | None = None,
 ) -> dict[str, int]:
     """Run one worker cycle: fetch, draft eligible posts, post due schedules, poll outcomes."""
-    fetched = fetch_and_store(config, store, config_path=config_path)
-    drafted = draft_pending(config, store)
+    from rcopilot.projects import apply_project_to_config, seed_projects_from_config
+
+    store.ensure_schema()
+    seed_projects_from_config(store, config)
+    original_id = _project_id(config)
+    projects = [item for item in store.list_projects() if item.get("subreddits")]
+    fetched = 0
+    drafted = 0
+    if projects:
+        for project in projects:
+            apply_project_to_config(config, project)
+            try:
+                fetched += fetch_and_store(config, store, config_path=config_path)
+            except ValueError as exc:
+                logger.warning("Fetch skipped for project %s: %s", project.get("id"), exc)
+            try:
+                drafted += draft_pending(config, store)
+            except ValueError as exc:
+                logger.warning("Draft skipped for project %s: %s", project.get("id"), exc)
+        original = store.get_project(original_id)
+        if original:
+            apply_project_to_config(config, original)
+            if config_path:
+                save_config(config_path, config)
+    else:
+        fetched = fetch_and_store(config, store, config_path=config_path)
+        drafted = draft_pending(config, store)
     scheduled_results = post_due_scheduled(config, store)
     posted = sum(1 for item in scheduled_results if item.get("ok"))
     outcomes = poll_outcomes(config, store)
@@ -758,6 +821,13 @@ def run_once(
 
 def rescore_posts(store: Store, config: AppConfig) -> int:
     """Re-score all posts (useful after config keyword changes)."""
-    posts = store.list_posts()
-    apply_scores(store, posts, config.discovery, product=config.voice.product)
+    project_id = _project_id(config)
+    posts = store.list_posts(project_id=project_id)
+    apply_scores(
+        store,
+        posts,
+        config.discovery,
+        product=config.voice.product,
+        project_id=project_id,
+    )
     return len(posts)

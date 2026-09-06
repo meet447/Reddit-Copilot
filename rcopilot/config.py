@@ -19,6 +19,7 @@ Top comments (for context; do not copy them):
 
 Your background (use only if it genuinely helps answer OP):
 Product/context: {product}
+Goals: {goals}
 Tone: {tone}
 Persona: {persona}
 Things to avoid: {avoid}
@@ -107,6 +108,9 @@ class AppConfig:
     onboarding_step: int = 0
     oauth_redirect_uri: str = "http://127.0.0.1:8000/api/oauth/callback"
     frontend_url: str = "http://localhost:3000"
+    active_project_id: str = ""
+    purpose: str = "product"
+    goals: list[str] = field(default_factory=list)
 
 
 def _env_account_prefix(name: str) -> str:
@@ -126,7 +130,7 @@ def _clamp_onboarding_step(value: Any) -> int:
         step = int(value or 0)
     except (TypeError, ValueError):
         return 0
-    return max(0, min(step, 4))
+    return max(0, min(step, 5))
 
 
 def _fill_account_secrets(account: Account, env: dict[str, str | None]) -> None:
@@ -211,6 +215,9 @@ def load_config(path: str | Path) -> AppConfig:
             raw.get("oauth_redirect_uri") or "http://127.0.0.1:8000/api/oauth/callback"
         ),
         frontend_url=str(raw.get("frontend_url") or "http://localhost:3000"),
+        active_project_id=str(raw.get("active_project_id") or ""),
+        purpose=str(raw.get("purpose") or "product"),
+        goals=[str(item) for item in (raw.get("goals") or []) if str(item).strip()],
     )
 
 
@@ -233,6 +240,7 @@ def _config_to_yaml_dict(config: AppConfig, *, include_secrets: bool = False) ->
         "onboarding_step": config.onboarding_step,
         "oauth_redirect_uri": config.oauth_redirect_uri,
         "frontend_url": config.frontend_url,
+        "active_project_id": config.active_project_id,
     }
 
     for account in config.accounts:
@@ -325,6 +333,9 @@ def sanitize_config(config: AppConfig) -> dict[str, Any]:
     )
     data["has_oauth"] = any(bool(account.refresh_token) for account in config.accounts)
     data["has_api_key"] = bool(config.llm.api_key)
+    data["active_project_id"] = config.active_project_id
+    data["purpose"] = config.purpose or "product"
+    data["goals"] = list(config.goals or [])
     data["accounts"] = [
         {
             "name": account.name,

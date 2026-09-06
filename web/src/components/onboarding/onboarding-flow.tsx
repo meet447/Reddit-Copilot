@@ -1,16 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  completeProject,
+  createProject,
+  fetchThreads,
   getConfig,
+  getProject,
+  patchProject,
   putConfig,
   putSecrets,
+  setActiveProject,
   startOAuth,
-  fetchThreads,
-  suggestSubreddits,
-  type AppConfig,
-  type ConfigUpdate,
+  streamInterview,
+  type InterviewMessage,
+  type ProjectLink,
+  type ProjectPurpose,
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
@@ -18,7 +24,10 @@ import { MeuxeMark, Mascot } from "@/components/ui/mascot";
 import { Field, Label, Input, Textarea, Hint } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { TagInput } from "@/components/ui/tag-input";
-import { IconRefresh } from "@/components/ui/icons";
+import { ChoiceCard } from "@/components/ui/choice-card";
+import { InterviewChat } from "@/components/onboarding/interview-chat";
+
+const ACCOUNT_STEPS = 3;
 
 const STEPS = [
   {
@@ -34,138 +43,158 @@ const STEPS = [
     mood: "thinking" as const,
   },
   {
-    title: "Describe your voice",
-    subtitle: "What you build and how you sound when you help people.",
-    mood: "happy" as const,
-  },
-  {
     title: "Connect your LLM",
-    subtitle: "OpenAI-compatible API — used for drafts and subreddit suggestions.",
+    subtitle:
+      "OpenAI-compatible API — used for drafts, briefing, and subreddit suggestions.",
     mood: "sleepy" as const,
   },
   {
-    title: "Pick your communities",
+    title: "What is this for?",
+    subtitle: "Each workspace can be a product, personal, or something you define.",
+    mood: "happy" as const,
+  },
+  {
+    title: "Tell us more",
     subtitle:
-      "We’ll suggest subreddits from your voice. Add or remove until it feels right.",
+      "A short conversation so Copilot can pick communities and write in your voice.",
+    mood: "thinking" as const,
+  },
+  {
+    title: "Review your workspace",
+    subtitle: "Edit the goals and communities, then we’ll fetch the first threads.",
     mood: "surprised" as const,
   },
 ];
 
-function clampStep(value: number | undefined): number {
+const PURPOSES: { id: ProjectPurpose; title: string; description: string }[] = [
+  {
+    id: "product",
+    title: "A product",
+    description:
+      "Find threads where people need what you make, then draft helpful replies.",
+  },
+  {
+    id: "personal",
+    title: "Personal",
+    description:
+      "Show up as yourself — expertise, job search, hobby communities.",
+  },
+  {
+    id: "custom",
+    title: "Custom",
+    description: "Describe exactly what you want this copilot to do.",
+  },
+];
+
+const OPENINGS: Record<ProjectPurpose, string> = {
+  product:
+    "Tell me about your product. What is it, who is it for, and what problem does it solve? You can also paste links to the site, docs, or a launch post.",
+  personal:
+    "Tell me about yourself — what you do, the communities you care about, and how you want to show up on Reddit.",
+  custom:
+    "What do you want to do with this copilot? What is your aim — the more specific, the better I can set up discovery and drafts.",
+};
+
+function messagesWithOpening(
+  purpose: ProjectPurpose,
+  messages: InterviewMessage[],
+): InterviewMessage[] {
+  if (messages.some((item) => item.role === "assistant")) return messages;
+  return [{ role: "assistant", content: OPENINGS[purpose] }, ...messages];
+}
+
+function clampStep(value: number | undefined, max: number): number {
   if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(Math.trunc(value as number), STEPS.length - 1));
+  return Math.max(0, Math.min(Math.trunc(value as number), max));
 }
 
 export function OnboardingFlow() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isNewProject = searchParams.get("new") === "1";
+  const isRerun = searchParams.get("briefing") === "1";
   const [step, setStep] = useState(0);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [suggesting, setSuggesting] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [connectedName, setConnectedName] = useState("");
   const [hasClientId, setHasClientId] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [accountReady, setAccountReady] = useState(false);
   const [redirectUri, setRedirectUri] = useState(
     "http://127.0.0.1:8000/api/oauth/callback",
   );
-  const suggestedOnce = useRef(false);
 
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
-  const [productDesc, setProductDesc] = useState("");
-  const [tone, setTone] = useState("");
-  const [persona, setPersona] = useState("");
-  const [subreddits, setSubreddits] = useState<string[]>([]);
-  const [keywords, setKeywords] = useState<string[]>([]);
   const [llmModel, setLlmModel] = useState("gpt-4o-mini");
   const [llmBaseUrl, setLlmBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
 
-  function applyConfig(config: AppConfig) {
-    if (config.oauth_redirect_uri) setRedirectUri(config.oauth_redirect_uri);
-    const account = config.accounts?.[0];
-    setHasClientId(Boolean(account?.has_client_id));
-    setHasApiKey(Boolean(config.has_api_key));
-    if (account?.connected_username) {
-      setConnectedName(account.connected_username);
-    } else if (account?.has_oauth) {
-      setConnectedName("your account");
-    }
-    setProductDesc(config.voice?.product ?? "");
-    setTone(config.voice?.tone ?? "");
-    setPersona(config.voice?.persona ?? "");
-    setSubreddits(config.subreddits ?? []);
-    setKeywords(config.discovery?.keywords ?? []);
-    if (config.llm?.model) setLlmModel(config.llm.model);
-    setLlmBaseUrl(config.llm?.base_url ?? "");
-  }
+  const [purpose, setPurpose] = useState<ProjectPurpose | null>(null);
+  const [projectId, setProjectId] = useState("");
+  const [messages, setMessages] = useState<InterviewMessage[]>([]);
+  const [streaming, setStreaming] = useState("");
+  const [replying, setReplying] = useState(false);
+  const [researched, setResearched] = useState<ProjectLink[]>([]);
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [briefing, setBriefing] = useState("");
+  const [goals, setGoals] = useState<string[]>([]);
+  const [subreddits, setSubreddits] = useState<string[]>([]);
+  const [keywords, setKeywords] = useState<string[]>([]);
 
-  async function persist(nextStep: number, extra?: ConfigUpdate) {
-    await putConfig({
-      onboarding_step: nextStep,
-      subreddits,
-      voice: {
-        product: productDesc,
-        tone,
-        persona,
-      },
-      discovery: {
-        keywords,
-      },
-      llm: {
-        model: llmModel,
-        base_url: llmBaseUrl || undefined,
-      },
-      ...extra,
-    });
-  }
-
-  async function runSuggest(force = false) {
-    if (!productDesc.trim()) {
-      setError("Describe what you make first, then we can suggest communities.");
-      return;
-    }
-    if (!force && subreddits.length > 0) return;
-    setSuggesting(true);
-    setError(null);
-    try {
-      const data = await suggestSubreddits({
-        product: productDesc,
-        tone,
-        persona,
-        count: 12,
-      });
-      setSubreddits(data.subreddits ?? []);
-      suggestedOnce.current = true;
-    } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : "Could not suggest subreddits. Add some manually.",
-      );
-    } finally {
-      setSuggesting(false);
-    }
-  }
+  const skipAccount = accountReady || isNewProject || isRerun;
+  const firstVisible = isRerun ? 4 : skipAccount ? ACCOUNT_STEPS : 0;
+  const visibleSteps = STEPS.map((_, i) => i).filter((i) => i >= firstVisible);
+  const current = STEPS[step];
 
   useEffect(() => {
     let cancelled = false;
     getConfig()
       .then((config) => {
         if (cancelled) return;
-        applyConfig(config);
+        if (config.oauth_redirect_uri) setRedirectUri(config.oauth_redirect_uri);
+        const account = config.accounts?.[0];
+        setHasClientId(Boolean(account?.has_client_id));
+        setHasApiKey(Boolean(config.has_api_key));
+        if (account?.connected_username) {
+          setConnectedName(account.connected_username);
+        } else if (account?.has_oauth) {
+          setConnectedName("your account");
+        }
+        if (config.llm?.model) setLlmModel(config.llm.model);
+        setLlmBaseUrl(config.llm?.base_url ?? "");
+        const redditOk = Boolean(account?.has_oauth || account?.connected_username);
+        const llmOk = Boolean(config.has_api_key);
+        const readyAccount = redditOk && llmOk && Boolean(account?.has_client_id);
+        setAccountReady(readyAccount);
+
         const reddit = searchParams.get("reddit");
-        let nextStep = clampStep(config.onboarding_step);
-        // Migrate older saves that stored "subreddits" as step 3 before LLM swap.
-        if (
-          nextStep === 3 &&
-          !(config.subreddits?.length) &&
-          !config.has_api_key
-        ) {
-          nextStep = 3; // LLM step in new order
+        let nextStep = clampStep(config.onboarding_step, STEPS.length - 1);
+        if (isRerun && readyAccount && config.active_project_id) {
+          nextStep = 4;
+          void getProject(config.active_project_id)
+            .then((project) => {
+              if (cancelled) return;
+              setProjectId(project.id);
+              setPurpose(project.purpose);
+              setMessages(
+                messagesWithOpening(
+                  project.purpose,
+                  project.interview_messages ?? [],
+                ),
+              );
+              setResearched(project.links ?? []);
+            })
+            .catch(() => {
+              if (!cancelled) setError("Could not load this workspace.");
+            });
+        } else if (isNewProject && readyAccount) {
+          nextStep = ACCOUNT_STEPS;
+        } else if (readyAccount && nextStep < ACCOUNT_STEPS) {
+          nextStep = ACCOUNT_STEPS;
         }
         if (reddit === "connected" || reddit === "error") {
           nextStep = Math.max(nextStep, 1);
@@ -186,33 +215,18 @@ export function OnboardingFlow() {
     return () => {
       cancelled = true;
     };
-  }, [searchParams]);
+  }, [searchParams, isNewProject, isRerun]);
 
-  useEffect(() => {
-    if (!ready) return;
-    const timer = window.setTimeout(() => {
-      void persist(step);
-    }, 500);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    ready,
-    step,
-    productDesc,
-    tone,
-    persona,
-    subreddits,
-    keywords,
-    llmModel,
-    llmBaseUrl,
-  ]);
-
-  useEffect(() => {
-    if (!ready || step !== 4) return;
-    if (suggestedOnce.current || subreddits.length > 0) return;
-    void runSuggest(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, step]);
+  async function persistAccount(nextStep: number) {
+    if (isNewProject || isRerun) return;
+    await putConfig({
+      onboarding_step: nextStep,
+      llm: {
+        model: llmModel,
+        base_url: llmBaseUrl || undefined,
+      },
+    });
+  }
 
   async function saveSecretsIfPresent() {
     const secrets: {
@@ -234,12 +248,101 @@ export function OnboardingFlow() {
     }
   }
 
-  async function finish() {
-    setLoading(true);
+  async function handleConnect() {
+    setConnecting(true);
     setError(null);
     try {
       await saveSecretsIfPresent();
-      await persist(STEPS.length - 1, { onboarding_complete: true });
+      await persistAccount(1);
+      const { authorize_url } = await startOAuth("/onboarding");
+      window.location.href = authorize_url;
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Could not start Reddit sign-in.",
+      );
+      setConnecting(false);
+    }
+  }
+
+  async function startInterview(nextPurpose: ProjectPurpose) {
+    if (projectId && purpose === nextPurpose) return;
+    const project = await createProject(nextPurpose);
+    setProjectId(project.id);
+    setPurpose(nextPurpose);
+    setMessages(
+      messagesWithOpening(nextPurpose, project.interview_messages ?? []),
+    );
+    setResearched([]);
+  }
+
+  async function sendInterview(text: string) {
+    if (!projectId) return;
+    setError(null);
+    setReplying(true);
+    setMessages((current) => [...current, { role: "user", content: text }]);
+    setStreaming("");
+    try {
+      const reply = await streamInterview(
+        projectId,
+        text,
+        (delta) => setStreaming((value) => value + delta),
+        (items) => setResearched((current) => [...current, ...items]),
+      );
+      setStreaming("");
+      setMessages((current) => [...current, reply]);
+    } catch (e) {
+      setStreaming("");
+      setError(
+        e instanceof Error ? e.message : "Could not continue the briefing.",
+      );
+    } finally {
+      setReplying(false);
+    }
+  }
+
+  async function generateWorkspace() {
+    if (!projectId) {
+      setError("Pick a purpose first.");
+      return;
+    }
+    setGenerating(true);
+    setError(null);
+    try {
+      const project = await completeProject(projectId);
+      setWorkspaceName(project.name);
+      setBriefing(project.briefing);
+      setGoals(project.goals ?? []);
+      setSubreddits(project.subreddits ?? []);
+      setKeywords(project.keywords ?? []);
+      setStep(5);
+      await persistAccount(5);
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Could not generate the workspace.",
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function finish() {
+    if (!projectId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await patchProject(projectId, {
+        name: workspaceName,
+        briefing,
+        goals,
+        subreddits,
+        keywords,
+        complete: true,
+      });
+      await setActiveProject(projectId);
+      if (!isNewProject) {
+        await persistAccount(STEPS.length - 1);
+        await putConfig({ onboarding_complete: true });
+      }
       try {
         await fetchThreads();
       } catch {
@@ -255,10 +358,6 @@ export function OnboardingFlow() {
 
   async function handleContinue() {
     if (step === 0) {
-      if (!clientId.trim() && !clientSecret.trim() && !hasClientId) {
-        setError("Paste your Reddit client ID and secret to continue.");
-        return;
-      }
       if ((!clientId.trim() || !clientSecret.trim()) && !hasClientId) {
         setError("Paste your Reddit client ID and secret to continue.");
         return;
@@ -268,29 +367,37 @@ export function OnboardingFlow() {
       setError("Connect Reddit before continuing.");
       return;
     }
-    if (step === 2 && !productDesc.trim()) {
-      setError("Say a bit about what you make so we can suggest communities.");
+    if (step === 2 && !hasApiKey && !apiKey.trim()) {
+      setError("Add an LLM API key so we can draft and run the briefing.");
       return;
     }
-    if (step === 3 && !hasApiKey && !apiKey.trim()) {
-      setError("Add an LLM API key so we can draft and suggest subreddits.");
+    if (step === 3 && !purpose) {
+      setError("Choose what this workspace is for.");
       return;
     }
-    if (step === 4 && subreddits.length === 0) {
-      setError("Add at least one subreddit to continue.");
+    if (step === 4) {
+      await generateWorkspace();
       return;
     }
+    if (step === 5) {
+      if (subreddits.length === 0) {
+        setError("Add at least one subreddit to continue.");
+        return;
+      }
+      await finish();
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
       await saveSecretsIfPresent();
-      if (step < STEPS.length - 1) {
-        const nextStep = step + 1;
-        await persist(nextStep);
-        setStep(nextStep);
-        return;
+      if (step === 3 && purpose) {
+        await startInterview(purpose);
       }
-      await finish();
+      const nextStep = step + 1;
+      await persistAccount(nextStep);
+      setStep(nextStep);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save this step.");
     } finally {
@@ -299,28 +406,17 @@ export function OnboardingFlow() {
   }
 
   async function handleBack() {
-    if (step === 0) return;
+    if (step <= firstVisible) {
+      if (isNewProject || isRerun) router.push("/queue");
+      return;
+    }
     const nextStep = step - 1;
     setError(null);
     try {
-      await persist(nextStep);
+      await persistAccount(nextStep);
       setStep(nextStep);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save this step.");
-    }
-  }
-
-  async function handleConnect() {
-    setConnecting(true);
-    setError(null);
-    try {
-      await saveSecretsIfPresent();
-      await persist(1);
-      const { authorize_url } = await startOAuth("/onboarding");
-      window.location.href = authorize_url;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start Reddit sign-in.");
-      setConnecting(false);
     }
   }
 
@@ -332,14 +428,20 @@ export function OnboardingFlow() {
     );
   }
 
-  const current = STEPS[step];
+  const continueLabel =
+    step === 4
+      ? "Generate workspace"
+      : step === STEPS.length - 1
+        ? "Finish"
+        : "Continue";
+  const isInterview = step === 4;
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-surface">
-      <header className="flex items-center justify-between px-6 py-4">
+      <header className="flex shrink-0 items-center justify-between px-6 py-4">
         <MeuxeMark size={32} />
         <div className="flex items-center gap-1.5">
-          {STEPS.map((_, i) => (
+          {visibleSteps.map((i) => (
             <span
               key={i}
               className={cn(
@@ -352,20 +454,56 @@ export function OnboardingFlow() {
         <div className="w-8" />
       </header>
 
-      <main className="flex flex-1 flex-col items-center justify-center px-6 pb-24">
-        <div className="w-full max-w-[560px] text-center motion-safe:animate-rise-in">
-          <Mascot mood={current.mood} className="mx-auto mb-6" size={96} />
-          <p className="mb-2 text-[13px] text-ink-3">
-            Step {step + 1} of {STEPS.length}
+      <main
+        className={cn(
+          "flex min-h-0 flex-1 flex-col items-center px-6 pb-24",
+          isInterview ? "justify-stretch pt-1" : "justify-center",
+        )}
+      >
+        <div
+          className={cn(
+            "w-full motion-safe:animate-rise-in",
+            isInterview
+              ? "flex min-h-0 max-w-[640px] flex-1 flex-col"
+              : "max-w-[560px] text-center",
+          )}
+        >
+          {!isInterview && (
+            <Mascot mood={current.mood} className="mx-auto mb-6" size={96} />
+          )}
+          <p
+            className={cn(
+              "mb-2 text-[13px] text-ink-3",
+              isInterview && "text-center",
+            )}
+          >
+            Step {visibleSteps.indexOf(step) + 1} of {visibleSteps.length}
           </p>
-          <h1 className="text-[24px] font-semibold tracking-tight text-ink">
+          <h1
+            className={cn(
+              "text-[24px] font-semibold tracking-tight text-ink",
+              isInterview && "text-center text-[20px]",
+            )}
+          >
             {current.title}
           </h1>
-          <p className="mt-2 text-[15px] leading-relaxed text-ink-2">
+          <p
+            className={cn(
+              "mt-2 text-[15px] leading-relaxed text-ink-2",
+              isInterview && "text-center text-[14px]",
+            )}
+          >
             {current.subtitle}
           </p>
 
-          <div className="mt-8 space-y-4 text-left">
+          <div
+            className={cn(
+              "text-left",
+              isInterview
+                ? "mt-5 flex min-h-0 flex-1 flex-col"
+                : "mt-8 space-y-4",
+            )}
+          >
             {error && <Notice tone="clay">{error}</Notice>}
 
             {step === 0 && (
@@ -430,38 +568,6 @@ export function OnboardingFlow() {
 
             {step === 2 && (
               <>
-                <Field>
-                  <Label htmlFor="ob-product">What do you make?</Label>
-                  <Textarea
-                    id="ob-product"
-                    value={productDesc}
-                    onChange={(e) => setProductDesc(e.target.value)}
-                    rows={3}
-                  />
-                </Field>
-                <Field>
-                  <Label htmlFor="ob-tone">Tone</Label>
-                  <Input
-                    id="ob-tone"
-                    value={tone}
-                    onChange={(e) => setTone(e.target.value)}
-                    placeholder="Helpful, direct, no hype"
-                  />
-                </Field>
-                <Field>
-                  <Label htmlFor="ob-persona">Persona notes</Label>
-                  <Textarea
-                    id="ob-persona"
-                    value={persona}
-                    onChange={(e) => setPersona(e.target.value)}
-                    rows={2}
-                  />
-                </Field>
-              </>
-            )}
-
-            {step === 3 && (
-              <>
                 {hasApiKey && (
                   <Notice tone="sage">
                     An LLM key is already saved. Leave the key blank to keep it.
@@ -499,37 +605,77 @@ export function OnboardingFlow() {
               </>
             )}
 
+            {step === 3 && (
+              <div className="space-y-2">
+                {PURPOSES.map((item) => (
+                  <ChoiceCard
+                    key={item.id}
+                    title={item.title}
+                    description={item.description}
+                    selected={purpose === item.id}
+                    onSelect={() => setPurpose(item.id)}
+                  />
+                ))}
+              </div>
+            )}
+
             {step === 4 && (
+              <InterviewChat
+                messages={messages}
+                streaming={streaming}
+                researched={researched}
+                busy={replying}
+                disabled={replying || generating}
+                onSend={(text) => void sendInterview(text)}
+              />
+            )}
+
+            {step === 5 && (
               <>
                 <Field>
-                  <div className="mb-1.5 flex items-center justify-between gap-2">
-                    <Label htmlFor="ob-subs">Subreddits</Label>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      leading={<IconRefresh size={14} />}
-                      loading={suggesting}
-                      onClick={() => void runSuggest(true)}
-                    >
-                      Regenerate
-                    </Button>
-                  </div>
+                  <Label htmlFor="ob-name">Workspace name</Label>
+                  <Input
+                    id="ob-name"
+                    value={workspaceName}
+                    onChange={(e) => setWorkspaceName(e.target.value)}
+                  />
+                </Field>
+                <Field>
+                  <Label htmlFor="ob-briefing">
+                    {purpose === "personal"
+                      ? "About you"
+                      : purpose === "custom"
+                        ? "Aim"
+                        : "Product"}
+                  </Label>
+                  <Textarea
+                    id="ob-briefing"
+                    value={briefing}
+                    onChange={(e) => setBriefing(e.target.value)}
+                    rows={4}
+                  />
+                </Field>
+                <Field>
+                  <Label htmlFor="ob-goals">Goals</Label>
+                  <TagInput
+                    id="ob-goals"
+                    values={goals}
+                    onChange={setGoals}
+                    placeholder="Add a goal and press Enter"
+                  />
+                </Field>
+                <Field>
+                  <Label htmlFor="ob-subs">Subreddits</Label>
                   <TagInput
                     id="ob-subs"
                     values={subreddits}
                     onChange={setSubreddits}
                     stripSubPrefix
-                    disabled={suggesting}
-                    placeholder={
-                      suggesting
-                        ? "Suggesting communities…"
-                        : "Add r/name and press Enter"
-                    }
+                    placeholder="Add r/name and press Enter"
                   />
                   <Hint>
-                    Suggested from your product voice. Click a chip’s × to
-                    remove, or type to add.
+                    Suggested from the briefing. Add or remove until it feels
+                    right.
                   </Hint>
                 </Field>
                 <Field>
@@ -540,12 +686,9 @@ export function OnboardingFlow() {
                     onChange={setKeywords}
                     placeholder="Add a keyword and press Enter"
                   />
-                  <Hint>
-                    Signals for Discover — e.g. “looking for”, “recommend”.
-                  </Hint>
                 </Field>
                 <Notice tone="accent">
-                  We&apos;ll run your first thread fetch when you finish.
+                  We’ll run your first thread fetch when you finish.
                 </Notice>
               </>
             )}
@@ -554,11 +697,18 @@ export function OnboardingFlow() {
       </main>
 
       <footer className="fixed bottom-0 left-0 right-0 flex items-center justify-between border-t border-line bg-surface px-6 py-4">
-        <Button variant="ghost" disabled={step === 0} onClick={handleBack}>
-          Back
+        <Button
+          variant="ghost"
+          disabled={step <= firstVisible && !isNewProject && !isRerun}
+          onClick={() => void handleBack()}
+        >
+          {step <= firstVisible && (isNewProject || isRerun) ? "Cancel" : "Back"}
         </Button>
-        <Button loading={loading} onClick={handleContinue}>
-          {step === STEPS.length - 1 ? "Finish" : "Continue"}
+        <Button
+          loading={loading || generating}
+          onClick={() => void handleContinue()}
+        >
+          {continueLabel}
         </Button>
       </footer>
     </div>

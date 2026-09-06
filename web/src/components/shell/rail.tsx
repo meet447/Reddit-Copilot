@@ -14,6 +14,8 @@ import {
   IconPosts,
 } from "@/components/ui/icons";
 
+import { ProjectSwitcher } from "./project-switcher";
+
 const navItems = [
   { href: "/queue", label: "Queue", icon: IconQueue },
   { href: "/discover", label: "Discover", icon: IconCompass },
@@ -22,7 +24,13 @@ const navItems = [
   { href: "/activity", label: "Activity", icon: IconActivity },
 ];
 
-export function Rail({ onSettingsOpen }: { onSettingsOpen: () => void }) {
+export function Rail({
+  onSettingsOpen,
+  onProjectChange,
+}: {
+  onSettingsOpen: () => void;
+  onProjectChange?: (id: string) => void;
+}) {
   const pathname = usePathname();
 
   return (
@@ -30,9 +38,10 @@ export function Rail({ onSettingsOpen }: { onSettingsOpen: () => void }) {
       className="flex h-full w-16 shrink-0 flex-col items-center bg-well py-3 squircle rounded-panel"
       aria-label="Main navigation"
     >
-      <Link href="/queue" className="mb-6" aria-label="Reddit Copilot home">
+      <Link href="/queue" className="mb-3" aria-label="Reddit Copilot home">
         <MeuxeMark size={48} />
       </Link>
+      <ProjectSwitcher onChanged={onProjectChange} />
 
       <div className="flex flex-1 flex-col items-center gap-1">
         {navItems.map(({ href, label, icon: Icon }) => {

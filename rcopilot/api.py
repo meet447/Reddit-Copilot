@@ -32,6 +32,12 @@ from rcopilot.config import (
 )
 from rcopilot import reddit_client
 from rcopilot.draft_lint import lint_draft
+from rcopilot.interview import (
+    attach_user_turn,
+    complete_workspace,
+    iter_interview_reply,
+    opening_message,
+)
 from rcopilot.pipeline import (
     approve_draft,
     cancel_schedule,
@@ -52,7 +58,16 @@ from rcopilot.pipeline import (
     schedule_draft,
     skip_post,
 )
-from rcopilot.store import Store
+from rcopilot.store import DEFAULT_PROJECT_ID, PROJECT_PURPOSES, Store
+from rcopilot.projects import (
+    apply_project_to_config,
+    has_finished_project,
+    persist_config_to_project,
+    resolve_active_project,
+    seed_projects_from_config,
+    serialize_project,
+    serialize_project_summary,
+)
 from rcopilot.best_times import (
     get_cached_hours,
     set_cached_hours,
@@ -123,6 +138,8 @@ class SuggestSubredditsBody(BaseModel):
     tone: str | None = None
     persona: str | None = None
     count: int = 12
+    purpose: str | None = None
+    goals: list[str] | None = None
 
 
 class ConfigUpdateBody(BaseModel):
@@ -138,6 +155,34 @@ class ConfigUpdateBody(BaseModel):
     prompt_template: str | None = None
     onboarding_complete: bool | None = None
     onboarding_step: int | None = None
+    active_project_id: str | None = None
+    purpose: str | None = None
+    goals: list[str] | None = None
+
+
+class ProjectCreateBody(BaseModel):
+    purpose: str
+    name: str | None = None
+
+
+class ProjectUpdateBody(BaseModel):
+    name: str | None = None
+    briefing: str | None = None
+    goals: list[str] | None = None
+    tone: str | None = None
+    persona: str | None = None
+    avoid: str | None = None
+    subreddits: list[str] | None = None
+    keywords: list[str] | None = None
+    complete: bool | None = None
+
+
+class ActiveProjectBody(BaseModel):
+    id: str
+
+
+class InterviewBody(BaseModel):
+    message: str
 
 
 class SecretsBody(BaseModel):
@@ -211,12 +256,32 @@ def create_app(config_path: str | None = None) -> FastAPI:
     def get_config() -> AppConfig:
         if not resolved_path.exists():
             raise HTTPException(status_code=400, detail=f"Config not found: {resolved_path}")
-        return load_config(resolved_path)
+        config = load_config(resolved_path)
+        store = Store(config.db_path)
+        store.ensure_schema()
+        seed_projects_from_config(store, config)
+        project = resolve_active_project(store, config)
+        if project:
+            apply_project_to_config(config, project)
+        return config
 
     def get_store(config: AppConfig) -> Store:
         store = Store(config.db_path)
         store.ensure_schema()
+        seed_projects_from_config(store, config)
         return store
+
+    def _pid(config: AppConfig) -> str:
+        return (config.active_project_id or "").strip() or DEFAULT_PROJECT_ID
+
+    def _public_config(config: AppConfig) -> dict[str, Any]:
+        store = get_store(config)
+        data = sanitize_config(config)
+        data["projects"] = [serialize_project_summary(item) for item in store.list_projects()]
+        data["onboarding_complete"] = bool(
+            config.onboarding_complete and has_finished_project(store)
+        )
+        return data
 
     @app.on_event("startup")
     def on_startup() -> None:
@@ -233,7 +298,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     def status() -> dict[str, Any]:
         config = get_config()
         store = get_store(config)
-        counts = store.count_drafts_by_status()
+        counts = store.count_drafts_by_status(project_id=_pid(config))
         return {
             "counts": {
                 "pending": counts.get("pending", 0),
@@ -253,7 +318,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         config = get_config()
         store = get_store(config)
         filter_status = None if status == "all" else status
-        drafts = store.list_drafts(status=filter_status)
+        drafts = store.list_drafts(status=filter_status, project_id=_pid(config))
         return {"drafts": [_serialize_draft(d, product=config.voice.product) for d in drafts]}
 
     @app.get("/api/drafts/{draft_id}")
@@ -416,6 +481,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         config = get_config()
         store = get_store(config)
         posts = store.list_posts(
+            project_id=_pid(config),
             undrafted=undrafted if undrafted else None,
             skipped=skipped,
             min_score=config.discovery.min_score if undrafted else None,
@@ -458,10 +524,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
         config = get_config()
         store = get_store(config)
         try:
-            skip_post(store, post_id)
+            skip_post(store, post_id, project_id=_pid(config))
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        post = store.get_post(post_id)
+        post = store.get_post(post_id, project_id=_pid(config))
         return _serialize_post(post)  # type: ignore[arg-type]
 
     @app.post("/api/actions/fetch")
@@ -562,6 +628,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 tone=tone or "",
                 persona=persona or "",
                 count=body.count,
+                purpose=body.purpose or config.purpose,
+                goals=body.goals if body.goals is not None else config.goals,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -637,20 +705,20 @@ def create_app(config_path: str | None = None) -> FastAPI:
     def get_schedule() -> dict[str, Any]:
         config = get_config()
         store = get_store(config)
-        drafts = store.list_scheduled()
+        drafts = store.list_scheduled(project_id=_pid(config))
         return {"drafts": [_serialize_draft(d, product=config.voice.product) for d in drafts]}
 
     @app.get("/api/activity")
     def get_activity(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
         config = get_config()
         store = get_store(config)
-        events = store.list_audit(limit=limit)
+        events = store.list_audit(limit=limit, project_id=_pid(config))
         return {"events": events}
 
     @app.get("/api/config")
     def get_config_route() -> dict[str, Any]:
         config = get_config()
-        return sanitize_config(config)
+        return _public_config(config)
 
     @app.put("/api/config")
     def put_config(body: ConfigUpdateBody) -> dict[str, Any]:
@@ -713,10 +781,194 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if body.onboarding_complete is not None:
             config.onboarding_complete = body.onboarding_complete
         if body.onboarding_step is not None:
-            config.onboarding_step = max(0, min(int(body.onboarding_step), 4))
+            config.onboarding_step = max(0, min(int(body.onboarding_step), 5))
+        if body.active_project_id is not None:
+            config.active_project_id = body.active_project_id
+        if body.purpose is not None:
+            config.purpose = body.purpose
+        if body.goals is not None:
+            config.goals = [str(item) for item in body.goals if str(item).strip()]
 
         save_config(resolved_path, config)
-        return sanitize_config(config)
+        if any(
+            value is not None
+            for value in (body.subreddits, body.voice, body.discovery, body.goals, body.purpose)
+        ):
+            persist_config_to_project(get_store(config), config)
+        return _public_config(config)
+
+    @app.get("/api/projects")
+    def list_projects() -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        return {
+            "projects": [serialize_project_summary(item) for item in store.list_projects()],
+            "active_project_id": _pid(config),
+        }
+
+    @app.post("/api/projects")
+    def create_project_route(body: ProjectCreateBody) -> dict[str, Any]:
+        purpose = (body.purpose or "").strip().lower()
+        if purpose not in PROJECT_PURPOSES:
+            raise HTTPException(status_code=400, detail="Purpose must be product, personal, or custom.")
+        config = get_config()
+        store = get_store(config)
+        opening = opening_message(purpose)
+        project = store.create_project(
+            purpose=purpose,
+            name=(body.name or "").strip(),
+            interview_messages=[opening],
+        )
+        return serialize_project(project)
+
+    @app.put("/api/projects/active")
+    def set_active_project(body: ActiveProjectBody) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        project = store.get_project(body.id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        config.active_project_id = project["id"]
+        apply_project_to_config(config, project)
+        save_config(resolved_path, config)
+        return _public_config(config)
+
+    @app.get("/api/projects/{project_id}")
+    def get_project_route(project_id: str) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        project = store.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return serialize_project(project)
+
+    @app.patch("/api/projects/{project_id}")
+    def patch_project_route(project_id: str, body: ProjectUpdateBody) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        project = store.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        fields: dict[str, Any] = {}
+        for key in ("name", "briefing", "goals", "tone", "persona", "avoid", "subreddits", "keywords"):
+            value = getattr(body, key)
+            if value is not None:
+                fields[key] = value
+        if body.complete is not None:
+            fields["complete"] = body.complete
+        updated = store.update_project(project_id, **fields) if fields else project
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if body.complete or config.active_project_id == project_id:
+            config.active_project_id = project_id
+            apply_project_to_config(config, updated)
+            save_config(resolved_path, config)
+        return serialize_project(updated)
+
+    @app.post("/api/projects/{project_id}/interview")
+    def interview_project(project_id: str, body: InterviewBody) -> StreamingResponse:
+        config = get_config()
+        store = get_store(config)
+        project = store.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if not config.llm.api_key:
+            raise HTTPException(status_code=400, detail="Add an LLM API key first.")
+        text = (body.message or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="Write a message first.")
+
+        messages, researched = attach_user_turn(list(project.get("interview_messages") or []), text)
+        store.update_project(project_id, interview_messages=messages, links=_merge_links(project, researched))
+
+        def event_stream() -> Iterator[str]:
+            parts: list[str] = []
+            try:
+                if researched:
+                    yield f"data: {json.dumps({'research': researched})}\n\n"
+                for delta in iter_interview_reply(
+                    config.llm,
+                    purpose=project.get("purpose") or "custom",
+                    messages=messages,
+                ):
+                    parts.append(delta)
+                    yield f"data: {json.dumps({'delta': delta})}\n\n"
+                reply = "".join(parts).strip()
+                history = list(messages)
+                history.append({"role": "assistant", "content": reply})
+                store.update_project(project_id, interview_messages=history)
+                yield f"data: {json.dumps({'done': True, 'message': {'role': 'assistant', 'content': reply}})}\n\n"
+            except Exception as exc:
+                logger.exception("Interview failed for %s: %s", project_id, exc)
+                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.post("/api/projects/{project_id}/complete")
+    def complete_project_route(project_id: str) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        project = store.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if not config.llm.api_key:
+            raise HTTPException(status_code=400, detail="Add an LLM API key first.")
+        try:
+            briefing = complete_workspace(
+                config.llm,
+                purpose=project.get("purpose") or "custom",
+                messages=list(project.get("interview_messages") or []),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Project complete failed: %s", exc)
+            raise HTTPException(status_code=502, detail=f"Could not generate workspace: {exc}") from exc
+
+        updated = store.update_project(
+            project_id,
+            name=briefing["name"],
+            briefing=briefing["briefing"],
+            goals=briefing["goals"],
+            keywords=briefing["keywords"],
+            tone=briefing.get("tone") or "",
+            persona=briefing.get("persona") or "",
+            avoid=briefing.get("avoid") or "",
+            subreddits=briefing.get("subreddits") or [],
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        config.active_project_id = project_id
+        apply_project_to_config(config, updated)
+        save_config(resolved_path, config)
+        return serialize_project(updated)
+
+    def _merge_links(project: dict[str, Any], researched: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        existing = list(project.get("links") or [])
+        seen = {str(item.get("url") or "") for item in existing}
+        for item in researched:
+            url = str(item.get("url") or "")
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            existing.append(
+                {
+                    "url": url,
+                    "title": item.get("title") or "",
+                    "excerpt": item.get("excerpt") or "",
+                    "ok": bool(item.get("ok")),
+                    "error": item.get("error"),
+                }
+            )
+        return existing
 
     @app.put("/api/secrets")
     def put_secrets(body: SecretsBody) -> dict[str, bool]:
