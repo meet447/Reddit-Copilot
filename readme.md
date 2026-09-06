@@ -19,7 +19,8 @@
 </p>
 
 <p align="center">
-  <a href="#quickstart">Quickstart</a> ·
+  <a href="#quickstart-use-the-app">Quickstart</a> ·
+  <a href="#quickstart-develop">Develop</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="#cli">CLI</a> ·
@@ -41,10 +42,11 @@ Python owns Reddit, the LLM, SQLite, and the worker. Next.js owns the review des
 - **Local-first** — SQLite + `.env`; no cloud required
 - **OpenAI-compatible LLMs** — OpenAI, Groq, OpenRouter, or Ollama
 
-## Quickstart
+## Quickstart (use the app)
+
+Needs **Python 3.10+** and **Node.js 20+**.
 
 ```bash
-# Python 3.10+
 git clone https://github.com/meet447/Reddit-Karma-Bot.git
 cd Reddit-Karma-Bot
 python -m venv .venv
@@ -52,24 +54,31 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
 rcopilot init
+rcopilot serve              # API :8000 + UI :3000 (runs npm install once if needed)
 ```
 
-1. Copy `.env.example` → `.env` and fill in Reddit client id/secret + LLM key.
-2. Edit `config.yaml` (subreddits, keywords, voice, model) — or finish onboarding in the UI.
-3. Create a Reddit **web** app at https://www.reddit.com/prefs/apps. Redirect URI must be exactly:
-   `http://127.0.0.1:8000/api/oauth/callback`
-4. Open http://localhost:3000 and click **Connect Reddit**. Copilot stores a refresh token in `.env` — not your password.
+Open http://127.0.0.1:3000 and finish **onboarding** (Reddit web app, Connect Reddit, product voice, subreddits, LLM).
+
+Create the Reddit app at https://www.reddit.com/prefs/apps with redirect URI:
+
+`http://127.0.0.1:8000/api/oauth/callback`
+
+Optional: `rcopilot serve --with-worker` to keep discovery/schedules running in the background.
+
+## Quickstart (develop)
+
+Run API and UI in separate terminals when you’re iterating on the frontend:
 
 ```bash
-# Terminal 1 — API (and optionally the discover/draft worker)
-rcopilot serve            # http://127.0.0.1:8000
-# rcopilot serve --with-worker
+# Terminal 1 — API only
+rcopilot serve --api-only
+# rcopilot serve --api-only --with-worker
 
-# Terminal 2 — review UI
-cd web && npm install && npm run dev   # http://localhost:3000
+# Terminal 2 — Next.js
+cd web && npm install && npm run dev
 ```
 
-Or drive the pipeline from the CLI:
+Or drive the pipeline from the CLI after setup:
 
 ```bash
 rcopilot fetch     # pull posts
@@ -98,62 +107,16 @@ Nothing reaches Reddit until you hit **Post** or **Schedule**. Scheduling only d
 
 ## Configuration
 
-### `config.yaml`
+You don’t need to edit config by hand for normal use. **Onboarding** (and later **Settings**) write:
 
-```yaml
-subreddits:
-  - python
-  - learnpython
-listing: new          # new | hot — new is better for unanswered questions
-fetch_limit: 25
-db_path: rcopilot.db
+- `config.yaml` — subreddits, voice, discovery, LLM model/base URL, rate limits
+- `.env` — Reddit client id/secret, refresh token after Connect Reddit, LLM API key
 
-accounts:
-  - name: default
-    user_agent: "reddit-copilot/1.0 by u/YOUR_USERNAME"
-
-llm:
-  base_url: https://api.openai.com/v1
-  model: gpt-4o-mini
-
-rate_limits:
-  min_interval_seconds: 120
-  daily_cap: 10
-
-voice:
-  product: ""
-  tone: ""
-  persona: ""
-  avoid: ""
-
-discovery:
-  keywords: []
-  min_score: 0.25
-  # search_queries filled on fetch from the product blurb (LLM) or keywords
-
-worker:
-  interval_seconds: 300
-
-oauth_redirect_uri: http://127.0.0.1:8000/api/oauth/callback
-frontend_url: http://localhost:3000
-```
-
-### `.env`
-
-```bash
-REDDIT_CLIENT_ID=
-REDDIT_CLIENT_SECRET=
-REDDIT_REFRESH_TOKEN=
-LLM_API_KEY=
-```
-
-`REDDIT_REFRESH_TOKEN` is written automatically after **Connect Reddit**. Named accounts can use `REDDIT_<NAME>_CLIENT_ID` (and matching secret/refresh token).
-
-Password grant (`REDDIT_USERNAME` / `REDDIT_PASSWORD`) still works as a fallback if you already have a script app.
+Advanced defaults and a full example live in [`config.example.yaml`](config.example.yaml). Named accounts can use `REDDIT_<NAME>_CLIENT_ID` (and matching secret/refresh token). Password grant (`REDDIT_USERNAME` / `REDDIT_PASSWORD`) still works as a fallback for script apps.
 
 ### LLM providers
 
-Set `llm.base_url` + `llm.model` + `LLM_API_KEY`:
+Pick any OpenAI-compatible endpoint in onboarding/Settings (`base_url` + model + API key):
 
 | Provider   | `base_url` example              | Notes                |
 |------------|----------------------------------|----------------------|
@@ -168,14 +131,14 @@ Set `llm.base_url` + `llm.model` + `LLM_API_KEY`:
 rcopilot init
 rcopilot fetch
 rcopilot draft [--account NAME]
-rcopilot serve [--port 8000] [--with-worker]
+rcopilot serve [--port 8000] [--ui-port 3000] [--api-only] [--with-worker]
 rcopilot run                 # discover + draft + due schedules, looping
 rcopilot approve --id N
 rcopilot reject --id N
 rcopilot post [--id N]
 ```
 
-`rcopilot review` is deprecated — use `serve` plus the Next.js app.
+`rcopilot serve` starts the API and Next.js UI together. Use `--api-only` when developing the frontend separately.
 
 ## Project layout
 
@@ -193,18 +156,6 @@ DESIGN.md     # UI design system
 - Respect each subreddit’s rules and culture — don’t spam or hard-sell.
 - Keep rate limits conservative; Reddit may still rate-limit or restrict script apps.
 - This tool does **not** use proxies, vote manipulation, or unattended auto-commenting.
-
-## Migrating from Reddit-Karma-Bot (v0)
-
-Removed on purpose:
-
-- Auto-comment loops / karma farming
-- Proxies and random user-agents
-- Ad / spam posting modes
-- `g4f` free-provider scraping
-- Flask start/stop bot controls
-
-The last pre-pivot code is tagged `v0-legacy` (once published). Prefer this `1.x` flow.
 
 ## Contributing
 

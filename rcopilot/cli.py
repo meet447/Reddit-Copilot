@@ -53,12 +53,10 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     print()
     print("Next steps:")
-    print(f"  1. Copy {env_example_path} to .env and add REDDIT_CLIENT_ID / SECRET")
-    print("  2. Create a Reddit web app with redirect URI:")
+    print("  1. Create a Reddit web app with redirect URI:")
     print("     http://127.0.0.1:8000/api/oauth/callback")
-    print("  3. rcopilot serve, then open http://localhost:3000 and Connect Reddit")
-    print("  4. rcopilot fetch / draft — or finish onboarding in the UI")
-    print("  5. rcopilot post     — post approved drafts")
+    print("  2. rcopilot serve")
+    print("  3. Open http://127.0.0.1:3000 and finish onboarding")
     return 0
 
 
@@ -80,11 +78,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from rcopilot.api import create_app
+    from rcopilot.ui_server import (
+        ensure_web_deps,
+        resolve_web_dir,
+        start_ui,
+        stop_ui,
+    )
     from rcopilot.worker import run_forever
 
     config_path = str(args.config) if args.config else None
     stop_event = threading.Event()
     worker_thread: threading.Thread | None = None
+    ui_proc = None
 
     if args.with_worker:
         config = load_config(config_path or "config.yaml")
@@ -99,10 +104,33 @@ def cmd_serve(args: argparse.Namespace) -> int:
         worker_thread.start()
         print("Worker thread started")
 
+    if not args.api_only:
+        web_dir = resolve_web_dir()
+        if web_dir is None:
+            print(
+                "Warning: web/ not found — starting API only. "
+                "Clone the full repo or use --api-only.",
+                file=sys.stderr,
+            )
+        else:
+            try:
+                ensure_web_deps(web_dir, skip_install=args.no_install)
+                ui_proc = start_ui(
+                    web_dir,
+                    api_host=args.host,
+                    api_port=args.port,
+                    ui_port=args.ui_port,
+                )
+            except Exception as exc:
+                print(f"Error starting UI: {exc}", file=sys.stderr)
+                return 1
+            print(f"Open http://127.0.0.1:{args.ui_port} to use Reddit Copilot")
+
     app = create_app(config_path=config_path)
     try:
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     finally:
+        stop_ui(ui_proc)
         if worker_thread is not None:
             stop_event.set()
             worker_thread.join(timeout=5)
@@ -120,9 +148,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_review(args: argparse.Namespace) -> int:
-    print("The Flask review UI has been replaced.")
+    print("`rcopilot review` is deprecated.")
     print("Use: rcopilot serve")
-    print("And: npm run dev   (in the web/ directory for the Next.js UI)")
+    print("Or for API only: rcopilot serve --api-only")
     return 0
 
 
@@ -188,9 +216,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     draft_parser.set_defaults(func=cmd_draft)
 
-    serve_parser = subparsers.add_parser("serve", help="Start FastAPI server")
-    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
-    serve_parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Start API + Next.js UI (use --api-only for the API alone)",
+    )
+    serve_parser.add_argument("--host", default="127.0.0.1", help="API bind host (default: 127.0.0.1)")
+    serve_parser.add_argument("--port", type=int, default=8000, help="API bind port (default: 8000)")
+    serve_parser.add_argument(
+        "--ui-port",
+        type=int,
+        default=3000,
+        help="Next.js UI port (default: 3000)",
+    )
+    serve_parser.add_argument(
+        "--api-only",
+        action="store_true",
+        help="Start FastAPI only (for local frontend development)",
+    )
+    serve_parser.add_argument(
+        "--no-install",
+        action="store_true",
+        help="Do not run npm install if web/node_modules is missing",
+    )
     serve_parser.add_argument(
         "--with-worker",
         action="store_true",
@@ -201,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Run worker loop (fetch, draft, post due schedules)")
     run_parser.set_defaults(func=cmd_run)
 
-    review_parser = subparsers.add_parser("review", help="(deprecated) Use serve + npm run dev")
+    review_parser = subparsers.add_parser("review", help="(deprecated) Use rcopilot serve")
     review_parser.set_defaults(func=cmd_review)
 
     post_parser = subparsers.add_parser("post", help="Post approved drafts to Reddit")
