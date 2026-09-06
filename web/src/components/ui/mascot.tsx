@@ -18,18 +18,27 @@ const mouthPaths: Record<MascotMood, string> = {
   surprised: "M44 54 Q48 60 52 54",
 };
 
+const palettes = {
+  soft: { outer: "#F8EDD4", inner: "#FBF6EA" },
+  /** Slightly deeper cream for the nav mark so it reads on light rails */
+  mark: { outer: "#E2C78A", inner: "#EDD9A4" },
+} as const;
+
 export function Mascot({
   mood = "neutral",
   size = 80,
   className,
   animate = true,
+  palette = "soft",
 }: {
   mood?: MascotMood;
   size?: number;
   className?: string;
   animate?: boolean;
+  palette?: keyof typeof palettes;
 }) {
   const ey = eyeY[mood];
+  const fills = palettes[palette];
 
   return (
     <svg
@@ -42,8 +51,8 @@ export function Mascot({
         className,
       )}
     >
-      <ellipse cx="48" cy="52" rx="36" ry="32" fill="#F8EDD4" />
-      <ellipse cx="48" cy="48" rx="34" ry="30" fill="#FBF6EA" />
+      <ellipse cx="48" cy="52" rx="36" ry="32" fill={fills.outer} />
+      <ellipse cx="48" cy="48" rx="34" ry="30" fill={fills.inner} />
       <circle cx="36" cy={ey} r="3.5" fill="#1B1B1E" className="motion-safe:animate-blink" style={{ transformOrigin: "36px 42px" }} />
       <circle cx="60" cy={ey} r="3.5" fill="#1B1B1E" className="motion-safe:animate-blink" style={{ transformOrigin: "60px 42px" }} />
       {mood === "thinking" && (
@@ -71,6 +80,6 @@ export function Mascot({
   );
 }
 
-export function MeuxeMark({ size = 40 }: { size?: number }) {
-  return <Mascot mood="happy" size={size} animate={false} />;
+export function MeuxeMark({ size = 48 }: { size?: number }) {
+  return <Mascot mood="happy" size={size} animate={false} palette="mark" />;
 }

@@ -1,10 +1,45 @@
-# Reddit Copilot
+<p align="center">
+  <img src="assets/logo.svg" alt="Reddit Copilot" width="120" height="120" />
+</p>
 
-Formerly **Reddit-Karma-Bot** — now a **human-in-the-loop** Reddit engagement assistant.
+<h1 align="center">Reddit Copilot</h1>
 
-It finds threads and drafts replies in your voice. You approve in a few minutes. Nothing posts without you.
+<p align="center">
+  <strong>Local-first Reddit engagement assistant</strong><br />
+  Finds intent threads. Drafts replies in your voice. Nothing posts without you.
+</p>
 
-Local-first, open source. Python owns Reddit, the LLM, SQLite, and the worker. Next.js owns the review desk.
+<p align="center">
+  <a href="https://github.com/meet447/Reddit-Karma-Bot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+" /></a>
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/ui-Next.js-black.svg" alt="Next.js" /></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/api-FastAPI-009688.svg" alt="FastAPI" /></a>
+  <a href="https://github.com/meet447/Reddit-Karma-Bot/stargazers"><img src="https://img.shields.io/github/stars/meet447/Reddit-Karma-Bot?style=social" alt="GitHub stars" /></a>
+  <a href="https://github.com/meet447/Reddit-Karma-Bot/issues"><img src="https://img.shields.io/github/issues/meet447/Reddit-Karma-Bot" alt="GitHub issues" /></a>
+</p>
+
+<p align="center">
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#cli">CLI</a> ·
+  <a href="#contributing">Contributing</a> ·
+  <a href="#license">License</a>
+</p>
+
+---
+
+Formerly **Reddit-Karma-Bot** — rebuilt as a **human-in-the-loop** copilot, not a karma farmer.
+
+Python owns Reddit, the LLM, SQLite, and the worker. Next.js owns the review desk. Your OAuth tokens stay on your machine.
+
+## Features
+
+- **Discover** — fetch and rank intent threads (questions, looking-for-tool, complaints, unanswered)
+- **Review queue** — Add threads, stream a draft in your voice, edit, then **Post** or **Schedule**
+- **Outcomes** — poll posted comments for score, replies, and removals
+- **Local-first** — SQLite + `.env`; no cloud required
+- **OpenAI-compatible LLMs** — OpenAI, Groq, OpenRouter, or Ollama
 
 ## Quickstart
 
@@ -39,13 +74,13 @@ Or drive the pipeline from the CLI:
 ```bash
 rcopilot fetch     # pull posts
 rcopilot draft     # generate replies
-rcopilot post      # publish approved drafts
+rcopilot post      # publish ready drafts
 ```
 
 ## How it works
 
 ```
-Discover (auto) → Triage → Draft (auto) → Approve/Edit (you) → Post now | Schedule
+Discover → Add / Skip → Draft / Edit → Post now | Schedule → Outcomes
 ```
 
 ```
@@ -56,10 +91,10 @@ config.yaml + .env
         │
    rcopilot serve  ── JSON ──► Next.js review UI (web/)
         │
-   you approve  ──► post now, or schedule for later
+   you Post / Schedule  ──► Reddit comment (with outcome polling later)
 ```
 
-Nothing reaches Reddit until you approve it. Scheduling only delays an approved reply.
+Nothing reaches Reddit until you hit **Post** or **Schedule**. Scheduling only delays a reply you’ve already written.
 
 ## Configuration
 
@@ -142,10 +177,20 @@ rcopilot post [--id N]
 
 `rcopilot review` is deprecated — use `serve` plus the Next.js app.
 
+## Project layout
+
+```
+rcopilot/     # FastAPI, PRAW, LLM, SQLite, worker
+web/          # Next.js review desk
+tests/        # pytest
+PRODUCT.md    # product plan / roadmap
+DESIGN.md     # UI design system
+```
+
 ## Responsible use
 
 - Always review drafts before posting.
-- Respect each subreddit's rules and culture — don't spam or hard-sell.
+- Respect each subreddit’s rules and culture — don’t spam or hard-sell.
 - Keep rate limits conservative; Reddit may still rate-limit or restrict script apps.
 - This tool does **not** use proxies, vote manipulation, or unattended auto-commenting.
 
@@ -161,10 +206,20 @@ Removed on purpose:
 
 The last pre-pivot code is tagged `v0-legacy` (once published). Prefer this `1.x` flow.
 
+## Contributing
+
+Issues and PRs are welcome. For larger changes, open an issue first so we can align on scope.
+
+```bash
+pip install -e ".[dev]"
+pytest
+cd web && npm install && npm run lint
+```
+
 ## Roadmap
 
-See [PRODUCT.md](PRODUCT.md). Phase 1 is the review queue: intent discovery, auto-draft, human approve, schedule approved comments.
+See [PRODUCT.md](PRODUCT.md). Current focus: intent discovery, review desk, outcomes, and safe scheduling.
 
 ## License
 
-MIT
+[MIT](LICENSE) © Meet Sonawane

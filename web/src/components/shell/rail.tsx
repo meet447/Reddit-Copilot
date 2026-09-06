@@ -29,7 +29,7 @@ export function Rail({ onSettingsOpen }: { onSettingsOpen: () => void }) {
       aria-label="Main navigation"
     >
       <Link href="/queue" className="mb-6" aria-label="Reddit Copilot home">
-        <MeuxeMark size={40} />
+        <MeuxeMark size={48} />
       </Link>
 
       <div className="flex flex-1 flex-col items-center gap-1">
