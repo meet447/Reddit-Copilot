@@ -72,12 +72,5 @@ export function Mascot({
 }
 
 export function MeuxeMark({ size = 40 }: { size?: number }) {
-  return (
-    <div
-      className="flex items-center justify-center bg-accent-100 squircle rounded-control shadow-soft"
-      style={{ width: size, height: size }}
-    >
-      <Mascot mood="happy" size={size * 0.65} animate={false} />
-    </div>
-  );
+  return <Mascot mood="happy" size={size} animate={false} />;
 }
