@@ -46,6 +46,7 @@ export interface Post {
   relevance_score: number;
   score_reasons: string[];
   keywords_matched: string[];
+  intent_labels: string[];
   skipped: boolean;
 }
 
@@ -237,12 +238,14 @@ export function unscheduleDraft(id: number): Promise<Draft> {
 export async function getPosts(params?: {
   undrafted?: boolean;
   skipped?: boolean;
+  label?: string;
 }): Promise<Post[]> {
   const search = new URLSearchParams();
   if (params?.undrafted !== undefined)
     search.set("undrafted", String(params.undrafted));
   if (params?.skipped !== undefined)
     search.set("skipped", String(params.skipped));
+  if (params?.label) search.set("label", params.label);
   const qs = search.toString();
   const data = await request<{ posts: Post[] }>(
     `/api/posts${qs ? `?${qs}` : ""}`,

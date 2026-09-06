@@ -137,6 +137,7 @@ def _serialize_post(post: dict[str, Any]) -> dict[str, Any]:
         "relevance_score": post.get("relevance_score", 0),
         "score_reasons": post.get("score_reasons") or [],
         "keywords_matched": post.get("keywords_matched") or [],
+        "intent_labels": post.get("intent_labels") or [],
         "skipped": post.get("skipped", False),
     }
 
@@ -373,6 +374,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     def list_posts(
         undrafted: bool = Query(default=False),
         skipped: bool | None = Query(default=None),
+        label: str | None = Query(default=None),
     ) -> dict[str, Any]:
         config = get_config()
         store = get_store(config)
@@ -381,6 +383,14 @@ def create_app(config_path: str | None = None) -> FastAPI:
             skipped=skipped,
             min_score=config.discovery.min_score if undrafted else None,
         )
+        if label:
+            wanted = {item.strip() for item in label.split(",") if item.strip()}
+            if wanted:
+                posts = [
+                    post
+                    for post in posts
+                    if wanted.intersection(post.get("intent_labels") or [])
+                ]
         return {"posts": [_serialize_post(p) for p in posts]}
 
     @app.post("/api/posts/{post_id}/queue")

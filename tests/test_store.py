@@ -52,6 +52,7 @@ def test_post_scoring_columns_and_skip(tmp_path: Path) -> None:
         relevance_score=0.75,
         score_reasons=json.dumps(["question signal"]),
         keywords_matched=json.dumps(["python"]),
+        intent_labels=json.dumps(["question", "unanswered"]),
         skipped=1,
     )
     post = store.get_post("p1")
@@ -59,6 +60,7 @@ def test_post_scoring_columns_and_skip(tmp_path: Path) -> None:
     assert post["relevance_score"] == 0.75
     assert post["score_reasons"] == ["question signal"]
     assert post["keywords_matched"] == ["python"]
+    assert post["intent_labels"] == ["question", "unanswered"]
     assert post["skipped"] is True
 
     skipped = store.list_posts(skipped=True)

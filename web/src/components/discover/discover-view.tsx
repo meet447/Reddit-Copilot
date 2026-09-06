@@ -17,9 +17,29 @@ import { Surface } from "@/components/ui/surface";
 import { IconPlus, IconSkip, IconRefresh } from "@/components/ui/icons";
 import { Input, Field, Label } from "@/components/ui/field";
 
+const INTENT_LABELS: { slug: string; label: string }[] = [
+  { slug: "question", label: "Question" },
+  { slug: "looking-for-tool", label: "Looking for tool" },
+  { slug: "complaint", label: "Complaint" },
+  { slug: "unanswered", label: "Unanswered" },
+];
+
+const FILTERS: { id: string | null; label: string }[] = [
+  { id: null, label: "All" },
+  { id: "question", label: "Question" },
+  { id: "looking-for-tool", label: "Looking for tool" },
+  { id: "unanswered", label: "Unanswered" },
+  { id: "complaint", label: "Complaint" },
+];
+
+function labelDisplay(slug: string): string {
+  return INTENT_LABELS.find((item) => item.slug === slug)?.label ?? slug;
+}
+
 export function DiscoverView() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [query, setQuery] = useState("");
+  const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [apiDown, setApiDown] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -27,31 +47,44 @@ export function DiscoverView() {
   const [fetching, setFetching] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
-    try {
-      const data = await getPosts({ undrafted: true, skipped: false });
-      setPosts(data);
-      setApiDown(false);
-    } catch {
-      setApiDown(true);
-      setPosts([]);
-    } finally {
-      if (!opts?.silent) setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (opts?: { silent?: boolean; label?: string | null }) => {
+      if (!opts?.silent) setLoading(true);
+      const activeLabel = opts?.label !== undefined ? opts.label : labelFilter;
+      try {
+        const data = await getPosts({
+          undrafted: true,
+          skipped: false,
+          ...(activeLabel ? { label: activeLabel } : {}),
+        });
+        setPosts(data);
+        setApiDown(false);
+      } catch {
+        setApiDown(true);
+        setPosts([]);
+      } finally {
+        if (!opts?.silent) setLoading(false);
+      }
+    },
+    [labelFilter],
+  );
 
   useEffect(() => {
     load();
   }, [load]);
 
   const filtered = posts.filter((p) => {
+    if (labelFilter && !(p.intent_labels ?? []).includes(labelFilter)) {
+      return false;
+    }
     if (!query.trim()) return true;
     const q = query.toLowerCase();
     return (
       p.title.toLowerCase().includes(q) ||
       p.subreddit.toLowerCase().includes(q) ||
-      p.score_reasons?.some((r) => r.toLowerCase().includes(q))
+      (p.intent_labels ?? []).some((label) =>
+        labelDisplay(label).toLowerCase().includes(q),
+      )
     );
   });
 
@@ -121,6 +154,10 @@ export function DiscoverView() {
     }
   }
 
+  function handleLabelFilter(next: string | null) {
+    setLabelFilter(next);
+  }
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-line px-6 py-4">
@@ -146,6 +183,26 @@ export function DiscoverView() {
         {apiDown && <ApiDownNotice />}
         {actionError && <Notice tone="clay">{actionError}</Notice>}
         {message && <Notice tone="sage">{message}</Notice>}
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Intent filters">
+          {FILTERS.map((filter) => {
+            const active = labelFilter === filter.id;
+            return (
+              <button
+                key={filter.label}
+                type="button"
+                onClick={() => handleLabelFilter(filter.id)}
+                className={[
+                  "rounded-control px-2.5 py-1 text-[12px] transition-colors",
+                  active
+                    ? "bg-ink text-canvas"
+                    : "bg-accent-50 text-ink-2 hover:text-ink",
+                ].join(" ")}
+              >
+                {filter.label}
+              </button>
+            );
+          })}
+        </div>
         <Field>
           <Label htmlFor="discover-search" className="sr-only">
             Search results
@@ -154,7 +211,7 @@ export function DiscoverView() {
             id="discover-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter by title, subreddit, or signal…"
+            placeholder="Filter by title, subreddit, or label…"
           />
         </Field>
       </div>
@@ -201,14 +258,14 @@ export function DiscoverView() {
                         {post.selftext}
                       </p>
                     )}
-                    {post.score_reasons?.length > 0 && (
+                    {(post.intent_labels ?? []).length > 0 && (
                       <ul className="mt-3 flex flex-wrap gap-1.5">
-                        {post.score_reasons.map((r) => (
+                        {(post.intent_labels ?? []).map((slug) => (
                           <li
-                            key={r}
+                            key={slug}
                             className="rounded-control bg-accent-50 px-2 py-0.5 text-[11px] text-ink-2"
                           >
-                            {r}
+                            {labelDisplay(slug)}
                           </li>
                         ))}
                       </ul>

@@ -35,6 +35,25 @@ LOOKING_FOR_PHRASES = (
     "what do you use",
 )
 
+COMPLAINT_PHRASES = (
+    "frustrated with",
+    "doesn't work",
+    "does not work",
+    "broken",
+    "hate that",
+    "wish there was",
+    "problem with",
+    "struggling with",
+    "fed up",
+)
+
+INTENT_LABELS = (
+    "question",
+    "looking-for-tool",
+    "complaint",
+    "unanswered",
+)
+
 _TOKEN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _STOPWORDS = frozenset(
     {
@@ -146,15 +165,56 @@ _GENERIC = frozenset(
 )
 
 
-def _is_question(title: str) -> bool:
-    lowered = title.strip().lower()
-    if "?" in title:
+def _normalize_comments(post: dict[str, Any]) -> list[Any]:
+    comments = post.get("top_comments") or []
+    if isinstance(comments, str):
+        try:
+            comments = json.loads(comments)
+        except json.JSONDecodeError:
+            comments = []
+    return comments if isinstance(comments, list) else []
+
+
+def _is_question_text(text: str) -> bool:
+    lowered = text.strip().lower()
+    if not lowered:
+        return False
+    if "?" in text:
         return True
-    return any(lowered.startswith(prefix) for prefix in QUESTION_STARTS)
+    first_line = lowered.splitlines()[0].strip()
+    return any(first_line.startswith(prefix) for prefix in QUESTION_STARTS)
+
+
+def _is_question(post: dict[str, Any]) -> bool:
+    title = post.get("title") or ""
+    selftext = post.get("selftext") or ""
+    return _is_question_text(title) or _is_question_text(selftext)
 
 
 def _looking_for_tool(text: str) -> bool:
     return any(phrase in text for phrase in LOOKING_FOR_PHRASES)
+
+
+def _is_complaint(text: str) -> bool:
+    return any(phrase in text for phrase in COMPLAINT_PHRASES)
+
+
+def classify_intent(post: dict[str, Any]) -> list[str]:
+    """Return stable intent label slugs for a post."""
+    text = f"{post.get('title', '')} {post.get('selftext', '')}".lower()
+    comments = _normalize_comments(post)
+    labels: list[str] = []
+
+    if _is_question(post):
+        labels.append("question")
+    if _looking_for_tool(text):
+        labels.append("looking-for-tool")
+    if _is_complaint(text):
+        labels.append("complaint")
+    if len(comments) == 0:
+        labels.append("unanswered")
+
+    return labels
 
 
 def intent_terms_from_product(product: str, *, limit: int = 12) -> list[str]:
@@ -182,20 +242,24 @@ def score_post(
     post: dict[str, Any],
     keywords: list[str],
     product: str = "",
-) -> tuple[float, list[str], list[str]]:
+) -> tuple[float, list[str], list[str], list[str]]:
     """Score a post 0..1 using intent heuristics.
+
+    Returns (score, reasons, matched_keywords, intent_labels).
 
     Heuristics:
     - keyword hits in title+selftext: +0.15 each, cap +0.5
     - product-blurb term hits: +0.12 each, cap +0.36
     - looking-for-tool phrasing: +0.2
     - question signal: +0.2
+    - unanswered question (question radar): +0.15
     - light discussion (0-1 top comments): +0.15
     - freshness: <6h +0.15, <24h +0.05
     """
     score = 0.0
     reasons: list[str] = []
     matched: list[str] = []
+    labels = classify_intent(post)
 
     text = f"{post.get('title', '')} {post.get('selftext', '')}".lower()
 
@@ -223,18 +287,19 @@ def score_post(
             score += product_score
             reasons.append(f"product match (+{product_score:.2f})")
 
-    if _looking_for_tool(text):
+    if "looking-for-tool" in labels:
         score += 0.2
         reasons.append("looking-for-tool (+0.20)")
 
-    title = post.get("title") or ""
-    if _is_question(title):
+    if "question" in labels:
         score += 0.2
         reasons.append("question signal (+0.20)")
 
-    comments = post.get("top_comments") or []
-    if isinstance(comments, str):
-        comments = json.loads(comments)
+    if "question" in labels and "unanswered" in labels:
+        score += 0.15
+        reasons.append("unanswered question (+0.15)")
+
+    comments = _normalize_comments(post)
     if len(comments) <= 1:
         score += 0.15
         reasons.append("light discussion (+0.15)")
@@ -253,7 +318,7 @@ def score_post(
         score = min(score, 0.2)
         reasons.append("weak intent fit (capped)")
 
-    return min(score, 1.0), reasons, matched
+    return min(score, 1.0), reasons, matched, labels
 
 
 def apply_scores(
@@ -264,10 +329,13 @@ def apply_scores(
 ) -> None:
     """Compute and persist scores for *posts*."""
     for post in posts:
-        score, reasons, matched = score_post(post, discovery.keywords, product=product)
+        score, reasons, matched, labels = score_post(
+            post, discovery.keywords, product=product
+        )
         store.update_post(
             post["id"],
             relevance_score=score,
             score_reasons=json.dumps(reasons),
             keywords_matched=json.dumps(matched),
+            intent_labels=json.dumps(labels),
         )

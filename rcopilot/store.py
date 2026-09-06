@@ -109,6 +109,7 @@ class Store:
         self._add_column_if_missing(conn, "posts", "score_reasons", "TEXT DEFAULT '[]'")
         self._add_column_if_missing(conn, "posts", "skipped", "INTEGER DEFAULT 0")
         self._add_column_if_missing(conn, "posts", "keywords_matched", "TEXT DEFAULT '[]'")
+        self._add_column_if_missing(conn, "posts", "intent_labels", "TEXT DEFAULT '[]'")
         self._add_column_if_missing(conn, "drafts", "run_at", "TEXT")
 
         conn.commit()
@@ -153,7 +154,13 @@ class Store:
         if not fields:
             return
 
-        allowed = {"relevance_score", "score_reasons", "skipped", "keywords_matched"}
+        allowed = {
+            "relevance_score",
+            "score_reasons",
+            "skipped",
+            "keywords_matched",
+            "intent_labels",
+        }
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown post fields: {', '.join(sorted(unknown))}")
@@ -446,6 +453,7 @@ class Store:
             data["top_comments"] = json.loads(raw_comments)
         data["score_reasons"] = Store._parse_json_list(data.get("score_reasons"))
         data["keywords_matched"] = Store._parse_json_list(data.get("keywords_matched"))
+        data["intent_labels"] = Store._parse_json_list(data.get("intent_labels"))
         data["skipped"] = bool(data.get("skipped", 0))
         return data
 
