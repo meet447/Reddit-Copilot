@@ -31,8 +31,17 @@ OPENING_PROMPTS = {
     ),
 }
 
+READY_MARKER = "READY_FOR_WORKSPACE"
+
+_READY_RULE = (
+    "When you have enough to generate the workspace — a name, a short briefing, "
+    "and at least one goal — do not ask another question. Write one short sentence "
+    f"that you are setting up the workspace now, then on its own last line write exactly: {READY_MARKER}\n"
+    f"If anything important is still missing, ask one question and do not write {READY_MARKER}."
+)
+
 _SYSTEM_BY_PURPOSE = {
-    "product": """You are helping someone set up a Reddit Copilot workspace for a product.
+    "product": f"""You are helping someone set up a Reddit Copilot workspace for a product.
 
 Interview agenda (ask one thing at a time, short messages):
 1. Understand the product (what it is, who it is for, what problem it solves).
@@ -44,8 +53,8 @@ Rules:
 - Sound like a calm desk companion, not a growth hacker.
 - 1–3 short sentences per turn. One question at a time.
 - Never pitch posting automation. This tool only drafts; humans publish.
-- When you have enough to describe the product, goals, and likely Reddit audiences, say you can generate the workspace whenever they are ready.""",
-    "personal": """You are helping someone set up a Reddit Copilot workspace for personal use (not a company product).
+- {_READY_RULE}""",
+    "personal": f"""You are helping someone set up a Reddit Copilot workspace for personal use (not a company product).
 
 Interview agenda (ask one thing at a time, short messages):
 1. Understand them (work, interests, expertise, how they want to sound).
@@ -57,8 +66,8 @@ Rules:
 - Sound like a calm desk companion.
 - 1–3 short sentences per turn. One question at a time.
 - Do not assume they are selling a product.
-- When you have enough, say you can generate the workspace whenever they are ready.""",
-    "custom": """You are helping someone set up a Reddit Copilot workspace with no template.
+- {_READY_RULE}""",
+    "custom": f"""You are helping someone set up a Reddit Copilot workspace with no template.
 
 They will tell you exactly what they want this copilot for. Follow their lead.
 Ask only the follow-ups you need for: who they are in this context, what success looks like, topics/keywords, and which kinds of Reddit communities fit.
@@ -67,7 +76,7 @@ Rules:
 - Sound like a calm desk companion.
 - 1–3 short sentences per turn. One question at a time.
 - Do not force a product or personal-brand frame if they described something else.
-- When you have enough, say you can generate the workspace whenever they are ready.""",
+- {_READY_RULE}""",
 }
 
 EXTRACT_PROMPT = """From this briefing interview, extract a JSON object for a Reddit Copilot workspace.
@@ -86,6 +95,35 @@ Return ONLY JSON with keys:
 - persona: short persona notes
 - avoid: things not to say or do in comments
 """
+
+
+def split_ready_marker(text: str) -> tuple[str, bool]:
+    """Strip the end-of-interview marker. Returns (visible text, ready)."""
+    if not (text or "").strip():
+        return (text or "").rstrip(), False
+    stripped = text.rstrip()
+    lines = stripped.splitlines()
+    if lines and lines[-1].strip() == READY_MARKER:
+        body = "\n".join(lines[:-1]).rstrip()
+        return body, True
+    if READY_MARKER in stripped:
+        return stripped.replace(READY_MARKER, "").rstrip(), True
+    return stripped, False
+
+
+def visible_interview_stream(buffer: str) -> str:
+    """Hide a trailing READY_FOR_WORKSPACE (including a partial last line) while streaming."""
+    visible, ready = split_ready_marker(buffer)
+    if ready:
+        return visible
+    if "\n" in buffer:
+        head, last = buffer.rsplit("\n", 1)
+        if last and READY_MARKER.startswith(last):
+            return head
+        return buffer
+    if buffer and READY_MARKER.startswith(buffer) and len(buffer) >= 4:
+        return ""
+    return buffer
 
 
 def opening_message(purpose: str) -> dict[str, str]:

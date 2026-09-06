@@ -290,6 +290,11 @@ export function OnboardingFlow() {
       );
       setStreaming("");
       setMessages((current) => [...current, reply]);
+      if (reply.ready) {
+        setReplying(false);
+        await generateWorkspace();
+        return;
+      }
     } catch (e) {
       setStreaming("");
       setError(
@@ -624,7 +629,8 @@ export function OnboardingFlow() {
                 messages={messages}
                 streaming={streaming}
                 researched={researched}
-                busy={replying}
+                busy={replying || generating}
+                setup={generating}
                 disabled={replying || generating}
                 onSend={(text) => void sendInterview(text)}
               />

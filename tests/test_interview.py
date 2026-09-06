@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from rcopilot.interview import EXTRACT_PROMPT, _parse_briefing_json, opening_message
+from rcopilot.interview import (
+    EXTRACT_PROMPT,
+    READY_MARKER,
+    _parse_briefing_json,
+    opening_message,
+    split_ready_marker,
+    visible_interview_stream,
+)
 from rcopilot.llm import build_search_query_prompt
 from rcopilot.research import extract_urls
 
@@ -51,3 +58,22 @@ def test_search_query_prompt_differs_for_personal() -> None:
     assert "not buying-intent" in personal
     assert "Purpose: personal" in personal
     assert EXTRACT_PROMPT
+
+
+def test_ready_marker_is_stripped() -> None:
+    text = f"I'll set up the workspace from this.\n{READY_MARKER}\n"
+    visible, ready = split_ready_marker(text)
+    assert ready is True
+    assert visible == "I'll set up the workspace from this."
+    assert READY_MARKER not in visible
+    leftover, not_ready = split_ready_marker("What kind of design do you do?")
+    assert not_ready is False
+    assert leftover.startswith("What kind")
+
+
+def test_stream_hides_partial_ready_marker() -> None:
+    prefix = "I'll set this up now.\nREADY_FOR_WORK"
+    assert visible_interview_stream(prefix) == "I'll set this up now."
+    assert visible_interview_stream(f"I'll set this up now.\n{READY_MARKER}") == "I'll set this up now."
+    assert "READY" not in visible_interview_stream("What is the aim?")
+

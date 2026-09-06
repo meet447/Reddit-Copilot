@@ -37,6 +37,8 @@ from rcopilot.interview import (
     complete_workspace,
     iter_interview_reply,
     opening_message,
+    split_ready_marker,
+    visible_interview_stream,
 )
 from rcopilot.pipeline import (
     approve_draft,
@@ -882,7 +884,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         store.update_project(project_id, interview_messages=messages, links=_merge_links(project, researched))
 
         def event_stream() -> Iterator[str]:
-            parts: list[str] = []
+            held = ""
+            emitted = 0
             try:
                 if researched:
                     yield f"data: {json.dumps({'research': researched})}\n\n"
@@ -891,13 +894,16 @@ def create_app(config_path: str | None = None) -> FastAPI:
                     purpose=project.get("purpose") or "custom",
                     messages=messages,
                 ):
-                    parts.append(delta)
-                    yield f"data: {json.dumps({'delta': delta})}\n\n"
-                reply = "".join(parts).strip()
+                    held += delta
+                    visible = visible_interview_stream(held)
+                    if len(visible) > emitted:
+                        yield f"data: {json.dumps({'delta': visible[emitted:]})}\n\n"
+                        emitted = len(visible)
+                reply, ready = split_ready_marker(held)
                 history = list(messages)
                 history.append({"role": "assistant", "content": reply})
                 store.update_project(project_id, interview_messages=history)
-                yield f"data: {json.dumps({'done': True, 'message': {'role': 'assistant', 'content': reply}})}\n\n"
+                yield f"data: {json.dumps({'done': True, 'ready': ready, 'message': {'role': 'assistant', 'content': reply}})}\n\n"
             except Exception as exc:
                 logger.exception("Interview failed for %s: %s", project_id, exc)
                 yield f"data: {json.dumps({'error': str(exc)})}\n\n"

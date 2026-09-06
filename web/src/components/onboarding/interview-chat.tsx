@@ -13,6 +13,7 @@ export function InterviewChat({
   streaming,
   researched,
   busy,
+  setup,
   disabled,
   onSend,
 }: {
@@ -20,6 +21,7 @@ export function InterviewChat({
   streaming: string;
   researched: ProjectLink[];
   busy?: boolean;
+  setup?: boolean;
   disabled?: boolean;
   onSend: (text: string) => void;
 }) {
@@ -91,6 +93,10 @@ export function InterviewChat({
                     aria-hidden="true"
                   />
                 </div>
+              ) : setup ? (
+                <p className="text-[14px] leading-[1.55] text-ink">
+                  Setting up your workspace…
+                </p>
               ) : (
                 <Dots className="py-1" />
               )}
@@ -103,11 +109,10 @@ export function InterviewChat({
             {researched.map((item) => (
               <span
                 key={item.url}
-                className="rounded-full bg-well px-2.5 py-1 text-[12px] text-ink-2"
+                title={item.title || item.url}
+                className="max-w-[min(100%,18rem)] truncate rounded-full bg-well px-2.5 py-1 text-[12px] text-ink-2"
               >
-                {item.ok === false
-                  ? `Couldn’t read ${hostOf(item.url)}`
-                  : `Read ${item.title || hostOf(item.url)}`}
+                {researchLabel(item)}
               </span>
             ))}
           </div>
@@ -150,4 +155,25 @@ function hostOf(url: string) {
   } catch {
     return url;
   }
+}
+
+function githubRepo(url: string) {
+  try {
+    const parts = new URL(url).pathname.split("/").filter(Boolean);
+    if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+function researchLabel(item: ProjectLink) {
+  const host = hostOf(item.url);
+  if (item.ok === false) return `Couldn’t read ${host}`;
+  if (host === "github.com") {
+    return `Read ${githubRepo(item.url) || host}`;
+  }
+  const title = (item.title || "").replace(/\s*[·|].*$/, "").trim();
+  if (!title || title.toLowerCase() === host) return `Read ${host}`;
+  return title.length > 36 ? `Read ${title.slice(0, 33)}…` : `Read ${title}`;
 }

@@ -152,6 +152,7 @@ export interface ProjectLink {
 export interface InterviewMessage {
   role: "assistant" | "user" | "system";
   content: string;
+  ready?: boolean;
 }
 
 export interface Project {
@@ -622,6 +623,7 @@ export async function streamInterview(
       const payload = JSON.parse(line.slice(6)) as {
         delta?: string;
         done?: boolean;
+        ready?: boolean;
         message?: InterviewMessage;
         research?: ProjectLink[];
         error?: string;
@@ -629,7 +631,9 @@ export async function streamInterview(
       if (payload.error) throw new ApiError(payload.error, 400);
       if (payload.research?.length) onResearch?.(payload.research);
       if (payload.delta) onDelta(payload.delta);
-      if (payload.done && payload.message) reply = payload.message;
+      if (payload.done && payload.message) {
+        reply = { ...payload.message, ready: Boolean(payload.ready) };
+      }
     }
   }
 
