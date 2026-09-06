@@ -66,6 +66,9 @@ export interface AccountPublic {
   name: string;
   user_agent: string;
   has_username: boolean;
+  has_oauth: boolean;
+  connected_username: string;
+  has_client_id: boolean;
 }
 
 export interface AppConfig {
@@ -97,7 +100,10 @@ export interface AppConfig {
   };
   onboarding_complete: boolean;
   has_credentials: boolean;
+  has_oauth: boolean;
   has_api_key: boolean;
+  oauth_redirect_uri: string;
+  frontend_url: string;
   prompt_template?: string;
 }
 
@@ -118,8 +124,6 @@ export type ConfigUpdate = {
 export type SecretsUpdate = {
   reddit_client_id?: string;
   reddit_client_secret?: string;
-  reddit_username?: string;
-  reddit_password?: string;
   llm_api_key?: string;
   account_name?: string;
 };
@@ -292,5 +296,15 @@ export function putSecrets(secrets: SecretsUpdate): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>("/api/secrets", {
     method: "PUT",
     body: JSON.stringify(secrets),
+  });
+}
+
+export function startOAuth(
+  next = "/onboarding",
+  accountName = "default",
+): Promise<{ authorize_url: string; redirect_uri: string }> {
+  return request("/api/oauth/start", {
+    method: "POST",
+    body: JSON.stringify({ next, account_name: accountName }),
   });
 }

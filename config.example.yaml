@@ -34,4 +34,8 @@ worker:
 
 onboarding_complete: false
 
+# Must match the Reddit web app redirect URI exactly
+oauth_redirect_uri: http://127.0.0.1:8000/api/oauth/callback
+frontend_url: http://localhost:3000
+
 # optional prompt_template override

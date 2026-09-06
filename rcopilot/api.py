@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from rcopilot import __version__
@@ -20,12 +23,13 @@ from rcopilot.config import (
     RateLimits,
     VoiceConfig,
     WorkerConfig,
-    _env_account_prefix,
+    env_secret_key,
     load_config,
     sanitize_config,
     save_config,
     write_env_secrets,
 )
+from rcopilot import reddit_client
 from rcopilot.pipeline import (
     approve_draft,
     cancel_schedule,
@@ -96,10 +100,13 @@ class ConfigUpdateBody(BaseModel):
 class SecretsBody(BaseModel):
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
-    reddit_username: str | None = None
-    reddit_password: str | None = None
     llm_api_key: str | None = None
     account_name: str | None = None
+
+
+class OAuthStartBody(BaseModel):
+    account_name: str | None = None
+    next: str | None = None
 
 
 def _serialize_draft(draft: dict[str, Any]) -> dict[str, Any]:
@@ -127,13 +134,21 @@ def create_app(config_path: str | None = None) -> FastAPI:
     resolved_path = Path(config_path or "config.yaml")
     app = FastAPI(title="Reddit Copilot API", version=__version__)
 
+    allow_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    extra_origins = os.environ.get("FRONTEND_ORIGINS", "")
+    allow_origins.extend(origin.strip() for origin in extra_origins.split(",") if origin.strip())
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+        allow_origins=allow_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.state.oauth_pending = {}
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
@@ -440,38 +455,91 @@ def create_app(config_path: str | None = None) -> FastAPI:
         account_name = body.account_name or "default"
 
         if body.reddit_client_id is not None:
-            key = (
-                "REDDIT_CLIENT_ID"
-                if account_name == "default"
-                else f"{_env_account_prefix(account_name)}_CLIENT_ID"
-            )
-            mapping[key] = body.reddit_client_id
+            mapping[env_secret_key(account_name, "CLIENT_ID")] = body.reddit_client_id
         if body.reddit_client_secret is not None:
-            key = (
-                "REDDIT_CLIENT_SECRET"
-                if account_name == "default"
-                else f"{_env_account_prefix(account_name)}_CLIENT_SECRET"
-            )
-            mapping[key] = body.reddit_client_secret
-        if body.reddit_username is not None:
-            key = (
-                "REDDIT_USERNAME"
-                if account_name == "default"
-                else f"{_env_account_prefix(account_name)}_USERNAME"
-            )
-            mapping[key] = body.reddit_username
-        if body.reddit_password is not None:
-            key = (
-                "REDDIT_PASSWORD"
-                if account_name == "default"
-                else f"{_env_account_prefix(account_name)}_PASSWORD"
-            )
-            mapping[key] = body.reddit_password
+            mapping[env_secret_key(account_name, "CLIENT_SECRET")] = body.reddit_client_secret
         if body.llm_api_key is not None:
             mapping["LLM_API_KEY"] = body.llm_api_key
 
         if mapping:
             write_env_secrets(env_path, mapping)
         return {"ok": True}
+
+    def _safe_next(path: str | None) -> str:
+        if path in {"/onboarding", "/queue"}:
+            return path
+        return "/onboarding"
+
+    @app.post("/api/oauth/start")
+    def oauth_start(body: OAuthStartBody | None = None) -> dict[str, str]:
+        config = get_config()
+        account_name = (body.account_name if body else None) or "default"
+        account = next((item for item in config.accounts if item.name == account_name), None)
+        if account is None:
+            raise HTTPException(status_code=400, detail=f"Unknown account: {account_name}")
+        if not account.client_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Save your Reddit client ID first, then connect.",
+            )
+        state = secrets.token_urlsafe(24)
+        app.state.oauth_pending[state] = {
+            "account_name": account_name,
+            "next": _safe_next(body.next if body else None),
+        }
+        try:
+            url = reddit_client.oauth_authorize_url(
+                account, config.oauth_redirect_uri, state
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"authorize_url": url, "redirect_uri": config.oauth_redirect_uri}
+
+    @app.get("/api/oauth/callback")
+    def oauth_callback(
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None,
+    ) -> RedirectResponse:
+        config = get_config()
+        frontend = config.frontend_url.rstrip("/")
+        pending: dict[str, dict[str, str]] = app.state.oauth_pending
+
+        def bounce(reason: str) -> RedirectResponse:
+            return RedirectResponse(
+                f"{frontend}/onboarding?reddit=error&reason={quote(reason)}",
+                status_code=302,
+            )
+
+        if error:
+            pending.pop(state, None)
+            return bounce(error)
+        if not code or not state or state not in pending:
+            pending.pop(state, None)
+            return bounce("missing_code")
+
+        meta = pending.pop(state)
+        account_name = meta["account_name"]
+        account = next((item for item in config.accounts if item.name == account_name), None)
+        if account is None:
+            return bounce("unknown_account")
+        try:
+            refresh_token, username = reddit_client.oauth_exchange_code(
+                account, config.oauth_redirect_uri, code
+            )
+        except Exception as exc:
+            return bounce(str(exc))
+
+        write_env_secrets(
+            resolved_path.parent / ".env",
+            {
+                env_secret_key(account_name, "REFRESH_TOKEN"): refresh_token,
+                env_secret_key(account_name, "USERNAME"): username,
+            },
+        )
+        account.connected_username = username
+        save_config(resolved_path, config)
+        dest = meta.get("next") or "/onboarding"
+        return RedirectResponse(f"{frontend}{dest}?reddit=connected", status_code=302)
 
     return app

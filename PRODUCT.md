@@ -12,7 +12,7 @@ For indie founders, developer advocates, and small marketers who know Reddit is 
 
 **Job to be done:** Continuously find threads where people want (or need) what you offer → draft replies in your voice → you approve in minutes → post now or schedule safely.
 
-**Why now:** GummySearch is gone (thread/intent discovery vacuum), Reddit’s API is tighter, LLMs are good enough that your job is judgment not typing — and local OSS with *your* script-app credentials is one of the few lanes Reddit still leaves open.
+**Why now:** GummySearch is gone (thread/intent discovery vacuum), Reddit’s API is tighter, LLMs are good enough that your job is judgment not typing — and local OSS with *your* Reddit OAuth tokens is one of the few lanes Reddit still leaves open.
 
 ---
 
@@ -194,7 +194,7 @@ Same loop. Human still approves every publish. Cloud hosts the worker, not the j
 | Backend language | **Python 3.10+** | PRAW ecosystem; pipeline + worker stay here |
 | Package / CLI | **`rcopilot`** via `pyproject.toml` | `fetch` / `draft` / `run` / `post` / `serve` |
 | HTTP API | **FastAPI** | JSON API for the Next app; replaces Flask UI routes |
-| Reddit API | **PRAW** + script-app password grant | Local OSS; abstract for OAuth later |
+| Reddit API | **PRAW** + web-app OAuth (refresh token) | Browser Connect Reddit; no password; local `.env` |
 | LLM | **OpenAI-compatible HTTP** (`openai` SDK) | OpenAI / Groq / OpenRouter / **Ollama** via `base_url` |
 | Storage | **SQLite** | Zero ops; posts, drafts, audit, schedule queue |
 | Config | **`config.yaml` + `.env`** | Non-secrets vs secrets; gitignore-safe |

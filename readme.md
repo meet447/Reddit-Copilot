@@ -19,9 +19,11 @@ pip install -e ".[dev]"
 rcopilot init
 ```
 
-1. Copy `.env.example` → `.env` and fill in Reddit + LLM credentials.
+1. Copy `.env.example` → `.env` and fill in Reddit client id/secret + LLM key.
 2. Edit `config.yaml` (subreddits, keywords, voice, model) — or finish onboarding in the UI.
-3. Create a Reddit **script** app at https://www.reddit.com/prefs/apps and paste the client id/secret into `.env`.
+3. Create a Reddit **web** app at https://www.reddit.com/prefs/apps. Redirect URI must be exactly:
+   `http://127.0.0.1:8000/api/oauth/callback`
+4. Open http://localhost:3000 and click **Connect Reddit**. Copilot stores a refresh token in `.env` — not your password.
 
 ```bash
 # Terminal 1 — API (and optionally the discover/draft worker)
@@ -95,6 +97,9 @@ discovery:
 
 worker:
   interval_seconds: 300
+
+oauth_redirect_uri: http://127.0.0.1:8000/api/oauth/callback
+frontend_url: http://localhost:3000
 ```
 
 ### `.env`
@@ -102,12 +107,13 @@ worker:
 ```bash
 REDDIT_CLIENT_ID=
 REDDIT_CLIENT_SECRET=
-REDDIT_USERNAME=
-REDDIT_PASSWORD=
+REDDIT_REFRESH_TOKEN=
 LLM_API_KEY=
 ```
 
-Named accounts can use `REDDIT_<NAME>_CLIENT_ID` (and matching secret/username/password).
+`REDDIT_REFRESH_TOKEN` is written automatically after **Connect Reddit**. Named accounts can use `REDDIT_<NAME>_CLIENT_ID` (and matching secret/refresh token).
+
+Password grant (`REDDIT_USERNAME` / `REDDIT_PASSWORD`) still works as a fallback if you already have a script app.
 
 ### LLM providers
 

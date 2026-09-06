@@ -41,10 +41,12 @@ def fetch_and_store(config: AppConfig, store: Store) -> int:
     if not config.subreddits:
         raise ValueError("No subreddits configured in config.yaml")
     account = _resolve_account(config, None)
-    if not account.client_id or not account.client_secret:
+    if not account.client_id:
         raise ValueError(
-            "Missing Reddit API credentials. Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env"
+            "Missing REDDIT_CLIENT_ID. Create a Reddit web app and paste the client id in .env or onboarding."
         )
+    if not account.refresh_token and not (account.username and account.password):
+        raise ValueError("Reddit is not connected. Use Connect Reddit in onboarding or Settings.")
     reddit = reddit_client.get_reddit(account)
 
     existing_ids = {

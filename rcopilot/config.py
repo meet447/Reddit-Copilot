@@ -40,6 +40,8 @@ class Account:
     client_secret: str = ""
     username: str = ""
     password: str = ""
+    refresh_token: str = ""
+    connected_username: str = ""
 
 
 @dataclass
@@ -88,6 +90,8 @@ class AppConfig:
     worker: WorkerConfig
     prompt_template: str
     onboarding_complete: bool = False
+    oauth_redirect_uri: str = "http://127.0.0.1:8000/api/oauth/callback"
+    frontend_url: str = "http://localhost:3000"
 
 
 def _env_account_prefix(name: str) -> str:
@@ -95,18 +99,25 @@ def _env_account_prefix(name: str) -> str:
     return f"REDDIT_{sanitized}"
 
 
+def env_secret_key(account_name: str, suffix: str) -> str:
+    """Return .env key for a Reddit secret, e.g. CLIENT_ID or REFRESH_TOKEN."""
+    if account_name == "default":
+        return f"REDDIT_{suffix}"
+    return f"{_env_account_prefix(account_name)}_{suffix}"
+
+
 def _fill_account_secrets(account: Account, env: dict[str, str | None]) -> None:
-    prefix = _env_account_prefix(account.name)
-    if account.name == "default":
-        account.client_id = account.client_id or env.get("REDDIT_CLIENT_ID") or ""
-        account.client_secret = account.client_secret or env.get("REDDIT_CLIENT_SECRET") or ""
-        account.username = account.username or env.get("REDDIT_USERNAME") or ""
-        account.password = account.password or env.get("REDDIT_PASSWORD") or ""
-    else:
-        account.client_id = account.client_id or env.get(f"{prefix}_CLIENT_ID") or ""
-        account.client_secret = account.client_secret or env.get(f"{prefix}_CLIENT_SECRET") or ""
-        account.username = account.username or env.get(f"{prefix}_USERNAME") or ""
-        account.password = account.password or env.get(f"{prefix}_PASSWORD") or ""
+    account.client_id = account.client_id or env.get(env_secret_key(account.name, "CLIENT_ID")) or ""
+    account.client_secret = (
+        account.client_secret or env.get(env_secret_key(account.name, "CLIENT_SECRET")) or ""
+    )
+    account.username = account.username or env.get(env_secret_key(account.name, "USERNAME")) or ""
+    account.password = account.password or env.get(env_secret_key(account.name, "PASSWORD")) or ""
+    account.refresh_token = (
+        account.refresh_token or env.get(env_secret_key(account.name, "REFRESH_TOKEN")) or ""
+    )
+    if not account.connected_username and account.username:
+        account.connected_username = account.username
 
 
 def _parse_account(raw: dict[str, Any]) -> Account:
@@ -117,6 +128,7 @@ def _parse_account(raw: dict[str, Any]) -> Account:
         client_secret=str(raw.get("client_secret", "")),
         username=str(raw.get("username", "")),
         password=str(raw.get("password", "")),
+        connected_username=str(raw.get("connected_username", "")),
     )
 
 
@@ -169,6 +181,10 @@ def load_config(path: str | Path) -> AppConfig:
         worker=WorkerConfig(interval_seconds=int(worker_raw.get("interval_seconds", 300))),
         prompt_template=str(raw.get("prompt_template") or DEFAULT_PROMPT_TEMPLATE),
         onboarding_complete=bool(raw.get("onboarding_complete", False)),
+        oauth_redirect_uri=str(
+            raw.get("oauth_redirect_uri") or "http://127.0.0.1:8000/api/oauth/callback"
+        ),
+        frontend_url=str(raw.get("frontend_url") or "http://localhost:3000"),
     )
 
 
@@ -188,10 +204,17 @@ def _config_to_yaml_dict(config: AppConfig, *, include_secrets: bool = False) ->
         "discovery": asdict(config.discovery),
         "worker": asdict(config.worker),
         "onboarding_complete": config.onboarding_complete,
+        "oauth_redirect_uri": config.oauth_redirect_uri,
+        "frontend_url": config.frontend_url,
     }
 
     for account in config.accounts:
-        acct: dict[str, Any] = {"name": account.name, "user_agent": account.user_agent}
+        acct: dict[str, Any] = {
+            "name": account.name,
+            "user_agent": account.user_agent,
+        }
+        if account.connected_username:
+            acct["connected_username"] = account.connected_username
         if include_secrets:
             acct.update(
                 {
@@ -199,6 +222,7 @@ def _config_to_yaml_dict(config: AppConfig, *, include_secrets: bool = False) ->
                     "client_secret": account.client_secret,
                     "username": account.username,
                     "password": account.password,
+                    "refresh_token": account.refresh_token,
                 }
             )
         data["accounts"].append(acct)
@@ -259,19 +283,29 @@ def write_env_secrets(env_path: str | Path, mapping: dict[str, str]) -> None:
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def account_is_connected(account: Account) -> bool:
+    """True when OAuth refresh token or password-grant credentials exist."""
+    if account.refresh_token:
+        return True
+    return bool(account.username and account.password)
+
+
 def sanitize_config(config: AppConfig) -> dict[str, Any]:
     """Return config safe for API responses (no secrets)."""
     data = _config_to_yaml_dict(config, include_secrets=False)
     data["has_credentials"] = any(
-        account.client_id and account.client_secret and account.username
-        for account in config.accounts
+        account.client_id and account_is_connected(account) for account in config.accounts
     )
+    data["has_oauth"] = any(bool(account.refresh_token) for account in config.accounts)
     data["has_api_key"] = bool(config.llm.api_key)
     data["accounts"] = [
         {
             "name": account.name,
             "user_agent": account.user_agent,
-            "has_username": bool(account.username),
+            "has_username": bool(account.username or account.connected_username),
+            "has_oauth": bool(account.refresh_token),
+            "connected_username": account.connected_username or account.username,
+            "has_client_id": bool(account.client_id),
         }
         for account in config.accounts
     ]

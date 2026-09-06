@@ -1,33 +1,29 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
+  getConfig,
   putConfig,
   putSecrets,
+  startOAuth,
   fetchThreads,
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { MeuxeMark, Mascot } from "@/components/ui/mascot";
-import {
-  Field,
-  Label,
-  Input,
-  Textarea,
-  Hint,
-} from "@/components/ui/field";
+import { Field, Label, Input, Textarea, Hint } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 
 const STEPS = [
   {
     title: "Create a Reddit app",
-    subtitle: "You'll need a script-type app from reddit.com/prefs/apps.",
+    subtitle: "A web app at reddit.com/prefs/apps. You’ll only paste the client id and secret.",
     mood: "neutral" as const,
   },
   {
-    title: "Add your credentials",
-    subtitle: "Script-app username and password stay on your machine.",
+    title: "Connect Reddit",
+    subtitle: "Sign in with Reddit in the browser. We store a refresh token locally — not your password.",
     mood: "thinking" as const,
   },
   {
@@ -49,14 +45,18 @@ const STEPS = [
 
 export function OnboardingFlow() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connectedName, setConnectedName] = useState("");
+  const [redirectUri, setRedirectUri] = useState(
+    "http://127.0.0.1:8000/api/oauth/callback",
+  );
 
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
   const [productDesc, setProductDesc] = useState("");
   const [tone, setTone] = useState("");
   const [persona, setPersona] = useState("");
@@ -65,6 +65,40 @@ export function OnboardingFlow() {
   const [llmModel, setLlmModel] = useState("gpt-4o-mini");
   const [llmBaseUrl, setLlmBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+
+  useEffect(() => {
+    getConfig()
+      .then((config) => {
+        if (config.oauth_redirect_uri) setRedirectUri(config.oauth_redirect_uri);
+        const account = config.accounts?.[0];
+        if (account?.has_oauth && account.connected_username) {
+          setConnectedName(account.connected_username);
+        }
+      })
+      .catch(() => {
+        // API down — keep defaults
+      });
+  }, []);
+
+  useEffect(() => {
+    const status = searchParams.get("reddit");
+    if (status === "connected") {
+      setStep(1);
+      getConfig()
+        .then((config) => {
+          const account = config.accounts?.[0];
+          setConnectedName(account?.connected_username ?? "your account");
+        })
+        .catch(() => setConnectedName("your account"));
+    }
+    if (status === "error") {
+      setStep(1);
+      setError(
+        searchParams.get("reason") ||
+          "Reddit connection didn’t finish. Check the redirect URI and try again.",
+      );
+    }
+  }, [searchParams]);
 
   async function finish() {
     setLoading(true);
@@ -93,18 +127,14 @@ export function OnboardingFlow() {
         },
       });
 
-      await putSecrets({
-        reddit_client_id: clientId,
-        reddit_client_secret: clientSecret,
-        reddit_username: username,
-        reddit_password: password,
-        llm_api_key: apiKey,
-      });
+      if (apiKey) {
+        await putSecrets({ llm_api_key: apiKey });
+      }
 
       try {
         await fetchThreads();
       } catch {
-        // Queue will show why fetch failed (missing creds, etc.)
+        // Queue will show why fetch failed
       }
       router.push("/queue");
     } catch (e) {
@@ -115,11 +145,51 @@ export function OnboardingFlow() {
   }
 
   async function handleContinue() {
+    if (step === 0) {
+      if (!clientId.trim() || !clientSecret.trim()) {
+        setError("Paste your Reddit client ID and secret to continue.");
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        await putSecrets({
+          reddit_client_id: clientId.trim(),
+          reddit_client_secret: clientSecret.trim(),
+        });
+        setStep(1);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not save app credentials.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    if (step === 1 && !connectedName) {
+      setError("Connect Reddit before continuing.");
+      return;
+    }
     if (step < STEPS.length - 1) {
       setStep(step + 1);
       return;
     }
     await finish();
+  }
+
+  async function handleConnect() {
+    setConnecting(true);
+    setError(null);
+    try {
+      await putSecrets({
+        reddit_client_id: clientId.trim(),
+        reddit_client_secret: clientSecret.trim(),
+      });
+      const { authorize_url } = await startOAuth("/onboarding");
+      window.location.href = authorize_url;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start Reddit sign-in.");
+      setConnecting(false);
+    }
   }
 
   const current = STEPS[step];
@@ -159,20 +229,16 @@ export function OnboardingFlow() {
             {error && <Notice tone="clay">{error}</Notice>}
 
             {step === 0 && (
-              <Field>
-                <Label htmlFor="ob-client-id">Reddit client ID</Label>
-                <Input
-                  id="ob-client-id"
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  placeholder="From reddit.com/prefs/apps"
-                />
-                <Hint>Create a script app — redirect URI can be http://localhost.</Hint>
-              </Field>
-            )}
-
-            {step === 1 && (
               <>
+                <Field>
+                  <Label htmlFor="ob-client-id">Reddit client ID</Label>
+                  <Input
+                    id="ob-client-id"
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    placeholder="From reddit.com/prefs/apps"
+                  />
+                </Field>
                 <Field>
                   <Label htmlFor="ob-secret">Client secret</Label>
                   <Input
@@ -181,24 +247,31 @@ export function OnboardingFlow() {
                     value={clientSecret}
                     onChange={(e) => setClientSecret(e.target.value)}
                   />
+                  <Hint>Create a web app. Redirect URI must match exactly:</Hint>
                 </Field>
-                <Field>
-                  <Label htmlFor="ob-user">Reddit username</Label>
-                  <Input
-                    id="ob-user"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                  />
-                </Field>
-                <Field>
-                  <Label htmlFor="ob-pass">Reddit password</Label>
-                  <Input
-                    id="ob-pass"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </Field>
+                <p className="rounded-field bg-well px-3 py-2 font-mono text-[12px] text-ink-2 break-all">
+                  {redirectUri}
+                </p>
+              </>
+            )}
+
+            {step === 1 && (
+              <>
+                {connectedName ? (
+                  <Notice tone="sage">Connected as u/{connectedName}.</Notice>
+                ) : (
+                  <Notice tone="accent">
+                    Nothing posts until you approve it. This only lets Copilot
+                    fetch threads and submit comments you approve.
+                  </Notice>
+                )}
+                <Button
+                  loading={connecting}
+                  onClick={handleConnect}
+                  className="w-full"
+                >
+                  {connectedName ? "Reconnect Reddit" : "Connect Reddit"}
+                </Button>
               </>
             )}
 

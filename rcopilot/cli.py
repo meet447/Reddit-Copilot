@@ -20,10 +20,10 @@ from rcopilot.store import Store
 
 ENV_EXAMPLE = """REDDIT_CLIENT_ID=
 REDDIT_CLIENT_SECRET=
-REDDIT_USERNAME=
-REDDIT_PASSWORD=
+REDDIT_REFRESH_TOKEN=
 LLM_API_KEY=
-# For named accounts use REDDIT_<NAME>_CLIENT_ID etc.
+# OAuth stores REDDIT_REFRESH_TOKEN after Connect Reddit.
+# Password grant is optional fallback: REDDIT_USERNAME / REDDIT_PASSWORD
 """
 
 
@@ -53,12 +53,12 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     print()
     print("Next steps:")
-    print(f"  1. Copy {env_example_path} to .env and fill in credentials")
-    print(f"  2. Edit {config_path} — subreddits, accounts, LLM settings")
-    print("  3. rcopilot fetch    — pull posts from Reddit")
-    print("  4. rcopilot draft    — generate draft replies")
-    print("  5. rcopilot serve    — start API (use npm run dev in web/ for UI)")
-    print("  6. rcopilot post     — post approved drafts")
+    print(f"  1. Copy {env_example_path} to .env and add REDDIT_CLIENT_ID / SECRET")
+    print("  2. Create a Reddit web app with redirect URI:")
+    print("     http://127.0.0.1:8000/api/oauth/callback")
+    print("  3. rcopilot serve, then open http://localhost:3000 and Connect Reddit")
+    print("  4. rcopilot fetch / draft — or finish onboarding in the UI")
+    print("  5. rcopilot post     — post approved drafts")
     return 0
 
 

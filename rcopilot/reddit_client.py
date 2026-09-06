@@ -1,4 +1,4 @@
-"""PRAW wrapper for fetching posts and posting comments."""
+"""PRAW wrapper for fetching posts, OAuth, and posting comments."""
 
 from __future__ import annotations
 
@@ -12,16 +12,51 @@ from rcopilot.config import Account
 
 logger = logging.getLogger(__name__)
 
+OAUTH_SCOPES = ["identity", "read", "submit"]
+DEFAULT_REDIRECT_URI = "http://127.0.0.1:8000/api/oauth/callback"
 
-def get_reddit(account: Account) -> praw.Reddit:
+
+def _base_kwargs(account: Account) -> dict[str, str]:
+    if not account.client_id:
+        raise ValueError("Missing REDDIT_CLIENT_ID. Create a Reddit web app and paste the client id.")
+    return {
+        "client_id": account.client_id,
+        "client_secret": account.client_secret or "",
+        "user_agent": account.user_agent,
+    }
+
+
+def get_reddit(account: Account, *, redirect_uri: str | None = None) -> praw.Reddit:
     """Return an authenticated PRAW Reddit instance for *account*."""
-    return praw.Reddit(
-        client_id=account.client_id,
-        client_secret=account.client_secret,
-        username=account.username,
-        password=account.password,
-        user_agent=account.user_agent,
+    kwargs = _base_kwargs(account)
+    if account.refresh_token:
+        return praw.Reddit(**kwargs, refresh_token=account.refresh_token)
+    if account.username and account.password:
+        return praw.Reddit(**kwargs, username=account.username, password=account.password)
+    if redirect_uri:
+        return praw.Reddit(**kwargs, redirect_uri=redirect_uri)
+    raise ValueError(
+        "Reddit is not connected. Use Connect Reddit in onboarding or Settings (OAuth)."
     )
+
+
+def oauth_authorize_url(account: Account, redirect_uri: str, state: str) -> str:
+    """Return Reddit's consent URL for the authorization-code flow."""
+    reddit = praw.Reddit(**_base_kwargs(account), redirect_uri=redirect_uri)
+    return reddit.auth.url(scopes=OAUTH_SCOPES, state=state, duration="permanent")
+
+
+def oauth_exchange_code(account: Account, redirect_uri: str, code: str) -> tuple[str, str]:
+    """Exchange an OAuth code for a refresh token and Reddit username."""
+    reddit = praw.Reddit(**_base_kwargs(account), redirect_uri=redirect_uri)
+    refresh_token = reddit.auth.authorize(code)
+    if not refresh_token:
+        raise ValueError(
+            "Reddit did not return a refresh token. Create a web app and set duration to permanent."
+        )
+    me = reddit.user.me()
+    username = str(getattr(me, "name", "") or "")
+    return refresh_token, username
 
 
 def _listing_method(reddit: praw.Reddit, subreddit_name: str, listing: str):

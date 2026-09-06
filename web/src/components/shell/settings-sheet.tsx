@@ -6,7 +6,9 @@ import {
   getConfig,
   putConfig,
   putSecrets,
+  startOAuth,
   type AppConfig,
+  type SecretsUpdate,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
@@ -41,11 +43,16 @@ export function SettingsSheet({
 
   const [redditClientId, setRedditClientId] = useState("");
   const [redditSecret, setRedditSecret] = useState("");
-  const [redditPassword, setRedditPassword] = useState("");
-  const [redditUsername, setRedditUsername] = useState("");
   const [llmKey, setLlmKey] = useState("");
   const [userAgent, setUserAgent] = useState("");
   const [accountName, setAccountName] = useState("default");
+  const [connectedUsername, setConnectedUsername] = useState("");
+  const [hasOAuth, setHasOAuth] = useState(false);
+  const [hasClientId, setHasClientId] = useState(false);
+  const [redirectUri, setRedirectUri] = useState(
+    "http://127.0.0.1:8000/api/oauth/callback",
+  );
+  const [connecting, setConnecting] = useState(false);
   const [productDesc, setProductDesc] = useState("");
   const [tone, setTone] = useState("");
   const [persona, setPersona] = useState("");
@@ -78,6 +85,10 @@ export function SettingsSheet({
         setLlmModel(c.llm?.model ?? "");
         setLlmBaseUrl(c.llm?.base_url ?? "");
         setHasCredentials(c.has_credentials);
+        setHasOAuth(Boolean(c.has_oauth || account?.has_oauth));
+        setHasClientId(Boolean(account?.has_client_id));
+        setConnectedUsername(account?.connected_username ?? "");
+        if (c.oauth_redirect_uri) setRedirectUri(c.oauth_redirect_uri);
         setHasApiKey(c.has_api_key);
       })
       .catch(() => setError("Could not load settings."));
@@ -127,13 +138,13 @@ export function SettingsSheet({
         accounts: [{ name: accountName, user_agent: userAgent }],
       });
 
-      const secrets: Record<string, string> = { account_name: accountName };
+      const secrets: SecretsUpdate = { account_name: accountName };
       if (redditClientId) secrets.reddit_client_id = redditClientId;
       if (redditSecret) secrets.reddit_client_secret = redditSecret;
-      if (redditPassword) secrets.reddit_password = redditPassword;
-      if (redditUsername) secrets.reddit_username = redditUsername;
       if (llmKey) secrets.llm_api_key = llmKey;
-      const hasSecrets = Object.keys(secrets).some((key) => key !== "account_name");
+      const hasSecrets = Boolean(
+        secrets.reddit_client_id || secrets.reddit_client_secret || secrets.llm_api_key,
+      );
       if (hasSecrets) await putSecrets(secrets);
 
       setSaved(true);
@@ -141,6 +152,25 @@ export function SettingsSheet({
       setError(e instanceof Error ? e.message : "Save failed.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleConnectReddit() {
+    setConnecting(true);
+    setError(null);
+    try {
+      if (redditClientId || redditSecret) {
+        await putSecrets({
+          account_name: accountName,
+          reddit_client_id: redditClientId || undefined,
+          reddit_client_secret: redditSecret || undefined,
+        });
+      }
+      const { authorize_url } = await startOAuth("/queue", accountName);
+      window.location.href = authorize_url;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start Reddit sign-in.");
+      setConnecting(false);
     }
   }
 
@@ -205,9 +235,15 @@ export function SettingsSheet({
 
             {section === "accounts" && (
               <>
-                {hasCredentials && (
-                  <Notice tone="sage">Reddit credentials are on file.</Notice>
-                )}
+                {hasOAuth && connectedUsername ? (
+                  <Notice tone="sage">Connected as u/{connectedUsername}.</Notice>
+                ) : hasCredentials ? (
+                  <Notice tone="sage">Reddit is connected on this machine.</Notice>
+                ) : hasClientId ? (
+                  <Notice tone="accent">
+                    App credentials are saved. Connect Reddit to finish.
+                  </Notice>
+                ) : null}
                 <Field>
                   <Label htmlFor="user-agent">User agent</Label>
                   <Input
@@ -215,7 +251,7 @@ export function SettingsSheet({
                     value={userAgent}
                     onChange={(e) => setUserAgent(e.target.value)}
                   />
-                  <Hint>Include your Reddit username so script apps stay identifiable.</Hint>
+                  <Hint>Identify this app in Reddit’s User-Agent header.</Hint>
                 </Field>
                 <Field>
                   <Label htmlFor="reddit-client-id">Reddit client ID</Label>
@@ -223,7 +259,7 @@ export function SettingsSheet({
                     id="reddit-client-id"
                     value={redditClientId}
                     onChange={(e) => setRedditClientId(e.target.value)}
-                    placeholder="Leave blank to keep current"
+                    placeholder={hasClientId ? "Leave blank to keep current" : "From reddit.com/prefs/apps"}
                   />
                 </Field>
                 <Field>
@@ -235,27 +271,18 @@ export function SettingsSheet({
                     onChange={(e) => setRedditSecret(e.target.value)}
                     placeholder="Leave blank to keep current"
                   />
+                  <Hint>Create a web app. Redirect URI must match exactly:</Hint>
                 </Field>
-                <Field>
-                  <Label htmlFor="reddit-username">Reddit username</Label>
-                  <Input
-                    id="reddit-username"
-                    value={redditUsername}
-                    onChange={(e) => setRedditUsername(e.target.value)}
-                    placeholder="Leave blank to keep current"
-                  />
-                </Field>
-                <Field>
-                  <Label htmlFor="reddit-password">Reddit password</Label>
-                  <Input
-                    id="reddit-password"
-                    type="password"
-                    value={redditPassword}
-                    onChange={(e) => setRedditPassword(e.target.value)}
-                    placeholder="Leave blank to keep current"
-                  />
-                  <Hint>Script-app credentials stay on your machine.</Hint>
-                </Field>
+                <p className="rounded-field bg-well px-3 py-2 font-mono text-[12px] text-ink-2 break-all">
+                  {redirectUri}
+                </p>
+                <Button
+                  loading={connecting}
+                  onClick={handleConnectReddit}
+                  className="w-full"
+                >
+                  {hasOAuth ? "Reconnect Reddit" : "Connect Reddit"}
+                </Button>
               </>
             )}
 
