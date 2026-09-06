@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+@theme {
+  --color-*: initial;
+
+  --color-surface-2: #ffffff;
+  --color-surface: #fcfcfc;
+  --color-canvas: #f4f4f5;
+  --color-well: #f0f0f2;
+  --color-well-2: #e6e6e9;
+  --color-line: #ebebee;
+  --color-line-2: #dcdce0;
+  --color-white: #ffffff;
+  --color-ink: #1b1b1e;
+  --color-ink-2: #4a4a50;
+  --color-ink-3: #8a8a93;
+  --color-ink-4: #bbbbc2;
+  --color-accent-50: #fbf6ea;
+  --color-accent-100: #f8edd4;
+  --color-accent-200: #f6e0aa;
+  --color-accent-300: #f3cd78;
+  --color-accent-400: #e8b44a;
+  --color-peach-50: #fbf3f1;
+  --color-peach-100: #f7e4df;
+  --color-peach-200: #f0cfc6;
+  --color-peach-300: #e8b6aa;
+  --color-honey-50: #fbf8eb;
+  --color-honey-100: #f5edc8;
+  --color-honey-200: #eee09a;
+  --color-honey-300: #e5cc62;
+  --color-sage-50: #f1f7f3;
+  --color-sage-100: #dceee3;
+  --color-sage-200: #c3e0cd;
+  --color-sage-300: #9ecbaf;
+  --color-clay-50: #fbf2f0;
+  --color-clay-100: #f4dcd7;
+  --color-clay-200: #e8bfb7;
+  --color-clay-300: #d99a8e;
+
+  --radius-control: 12px;
+  --radius-field: 12px;
+  --radius-card: 16px;
+  --radius-panel: 20px;
+  --radius-sheet: 24px;
+
+  --shadow-soft: 0 0 0 1px rgb(27 27 30 / 0.07);
+  --shadow-float: 0 0 0 1px rgb(27 27 30 / 0.09);
+  --shadow-pop: 0 8px 30px rgb(27 27 30 / 0.08);
+
+  --font-sans: var(--font-figtree);
+  --font-mono: var(--font-jetbrains-mono);
+
+  --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-fade-in: fade-in 300ms var(--ease-soft) both;
+  --animate-rise-in: rise-in 350ms var(--ease-soft) both;
+  --animate-pop-in: pop-in 300ms var(--ease-soft) both;
+  --animate-breathe: breathe 4s ease-in-out infinite;
+  --animate-blink: blink 4s ease-in-out infinite;
+  --animate-dot: dot 1.4s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+@keyframes blink {
+  0%,
+  90%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer base {
+  html {
+    @apply h-full;
+  }
+
+  body {
+    @apply min-h-full bg-canvas text-ink font-sans text-[15px] leading-relaxed antialiased;
+  }
+
+  .squircle {
+    corner-shape: squircle;
+  }
+}

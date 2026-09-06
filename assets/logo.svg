@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Reddit Copilot">
+  <ellipse cx="48" cy="52" rx="36" ry="32" fill="#E2C78A"/>
+  <ellipse cx="48" cy="48" rx="34" ry="30" fill="#EDD9A4"/>
+  <circle cx="36" cy="43" r="3.5" fill="#1B1B1E"/>
+  <circle cx="60" cy="43" r="3.5" fill="#1B1B1E"/>
+  <path d="M36 54 Q48 62 60 54" stroke="#1B1B1E" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+</svg>

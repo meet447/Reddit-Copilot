@@ -1,79 +1,176 @@
-# Reddit Karma Farmer
+<p align="center">
+  <img src="assets/logo.svg" alt="Reddit Copilot" width="120" height="120" />
+</p>
 
-Welcome to Reddit Karma Farmer, a sophisticated tool designed to help you efficiently manage and enhance your Reddit karma points. This application automates the process of engaging with Reddit posts, generating comments that align with popular trends and user sentiments, thereby increasing the likelihood of receiving upvotes.
+<h1 align="center">Reddit Copilot</h1>
 
-## Getting Started
+<p align="center">
+  <strong>Local-first Reddit engagement assistant</strong><br />
+  Finds intent threads. Drafts replies in your voice. Nothing posts without you.
+</p>
 
-To run the karma farmer locally using the terminal, follow these steps:
+<p align="center">
+  <a href="https://github.com/meet447/Reddit-Karma-Bot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+" /></a>
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/ui-Next.js-black.svg" alt="Next.js" /></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/api-FastAPI-009688.svg" alt="FastAPI" /></a>
+  <a href="https://github.com/meet447/Reddit-Karma-Bot/stargazers"><img src="https://img.shields.io/github/stars/meet447/Reddit-Karma-Bot?style=social" alt="GitHub stars" /></a>
+  <a href="https://github.com/meet447/Reddit-Karma-Bot/issues"><img src="https://img.shields.io/github/issues/meet447/Reddit-Karma-Bot" alt="GitHub issues" /></a>
+</p>
 
-1. Navigate to the project directory.
-2. Run the `app.py` file.
+<p align="center">
+  <a href="#quickstart-use-the-app">Quickstart</a> ·
+  <a href="#quickstart-develop">Develop</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#cli">CLI</a> ·
+  <a href="#contributing">Contributing</a> ·
+  <a href="#license">License</a>
+</p>
 
-```bash
-python app.py
-```
+---
 
-To run the farmer with a web interface locally, follow these steps:
+Formerly **Reddit-Karma-Bot** — rebuilt as a **human-in-the-loop** copilot, not a karma farmer.
 
-1. Navigate to the project directory.
-2. Run the `index.py` file.
-3. Visit the `/start_bot` route to initiate the karma farmer.
-4. Access the `/log` page to view detailed logs.
+Python owns Reddit, the LLM, SQLite, and the worker. Next.js owns the review desk. Your OAuth tokens stay on your machine.
 
-```bash
-python index.py
-```
-## Web Dashboard
-
-![image](https://github.com/meet447/Reddit-Karma-Bot/assets/51074036/2552eb5c-b2ce-42ec-aa5a-154f11435e16)
-
-
-To deploy the farmer on hosting services like Render and more, configure the hosting server to execute `web.py`.
-Render and hugging face spaces recommended!
 ## Features
 
-- **Effortless Engagement**: Automatically engage with Reddit posts by generating comments that resonate with the community's interests.
-- **User-Friendly Interface**: Access the karma farmer through a web interface for convenient interaction and monitoring.
-- **Scalable Deployment**: Deploy the farmer on various hosting platforms to ensure accessibility and scalability.
+- **Discover** — fetch and rank intent threads (questions, looking-for-tool, complaints, unanswered)
+- **Review queue** — Add threads, stream a draft in your voice, edit, then **Post** or **Schedule**
+- **Outcomes** — poll posted comments for score, replies, and removals
+- **Local-first** — SQLite + `.env`; no cloud required
+- **OpenAI-compatible LLMs** — OpenAI, Groq, OpenRouter, or Ollama
 
-## Requirements
+## Quickstart (use the app)
 
-- Python 3.7 or higher
-- PRAW (Python Reddit API Wrapper)
-- Fake Useragent
-- Flask (for web interface)
-- chipling ai (optional, for comment generation)
+Needs **Python 3.10+** and **Node.js 20+**.
 
-Your updated `config.py` file looks good! It nicely organizes the configuration parameters for your Reddit bot. 
+```bash
+git clone https://github.com/meet447/Reddit-Karma-Bot.git
+cd Reddit-Karma-Bot
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+
+rcopilot init
+rcopilot serve              # API :8000 + UI :3000 (runs npm install once if needed)
+```
+
+Open http://127.0.0.1:3000 and finish **onboarding** (Reddit web app, Connect Reddit, product voice, subreddits, LLM).
+
+Create the Reddit app at https://www.reddit.com/prefs/apps with redirect URI:
+
+`http://127.0.0.1:8000/api/oauth/callback`
+
+Optional: `rcopilot serve --with-worker` to keep discovery/schedules running in the background.
+
+## Quickstart (develop)
+
+Run API and UI in separate terminals when you’re iterating on the frontend:
+
+```bash
+# Terminal 1 — API only
+rcopilot serve --api-only
+# rcopilot serve --api-only --with-worker
+
+# Terminal 2 — Next.js
+cd web && npm install && npm run dev
+```
+
+Or drive the pipeline from the CLI after setup:
+
+```bash
+rcopilot fetch     # pull posts
+rcopilot draft     # generate replies
+rcopilot post      # publish ready drafts
+```
+
+## How it works
+
+```
+Discover → Add / Skip → Draft / Edit → Post now | Schedule → Outcomes
+```
+
+```
+config.yaml + .env
+        │
+        ▼
+   rcopilot fetch / run ──► SQLite (posts, scores, drafts, jobs, audit)
+        │
+   rcopilot serve  ── JSON ──► Next.js review UI (web/)
+        │
+   you Post / Schedule  ──► Reddit comment (with outcome polling later)
+```
+
+Nothing reaches Reddit until you hit **Post** or **Schedule**. Scheduling only delays a reply you’ve already written.
 
 ## Configuration
 
-Ensure to configure the following parameters in the `config.py` file:
+You don’t need to edit config by hand for normal use. **Onboarding** (and later **Settings**) write:
 
-- `client_id`: Your Reddit API client ID.
-- `client_secret`: Your Reddit API client secret.
-- `username`: Your Reddit account username.
-- `password`: Your Reddit account password.
-- `webhook`: (Optional) Discord webhook URL for logging purposes.
-- `discord_webhook`: (Optional) Boolean indicating whether the Discord webhook is enabled.
-- `type`: Select the purpose of your bot. You can choose from:
-  - `"ai"`: For a bot that generates comments using AI.
-  - `"ad"`: For a bot that posts predefined advertisements.
-  - `"post"`: For a bot that makes posts based on predefined titles and bodies.
-- `all_subreddits`: Set to `True` if you want the bot to post in all subreddits, or `False` to only post in specific subreddits listed below.
-- `subreddits`: List of subreddits where the bot will post or comment. If `all_subreddits` is set to `False`, the bot will only interact with these subreddits.
-- `posts`: List of dictionaries containing the titles and bodies of the posts to be made by the bot. Used when `type` is set to `"post"`.
-- `ads`: List of advertisements or messages to be posted by the bot. Used when `type` is set to `"ad"`.
+- `config.yaml` — subreddits, voice, discovery, LLM model/base URL, rate limits
+- `.env` — Reddit client id/secret, refresh token after Connect Reddit, LLM API key
 
-Ensure that you provide valid values for each parameter before running your bot.
+Advanced defaults and a full example live in [`config.example.yaml`](config.example.yaml). Named accounts can use `REDDIT_<NAME>_CLIENT_ID` (and matching secret/refresh token). Password grant (`REDDIT_USERNAME` / `REDDIT_PASSWORD`) still works as a fallback for script apps.
 
-## Usage
+### LLM providers
 
-1. Configure the `config.py` file with your Reddit account credentials and other settings.
-2. Run the application using either the terminal or a web interface.
-3. Monitor the logs to track the farmer's activities and engagement.
-4. Customize the comment generation method and parameters based on your preferences and requirements.
+Pick any OpenAI-compatible endpoint in onboarding/Settings (`base_url` + model + API key):
 
-## Disclaimer
+| Provider   | `base_url` example              | Notes                |
+|------------|----------------------------------|----------------------|
+| OpenAI     | `https://api.openai.com/v1`      | default              |
+| Groq       | `https://api.groq.com/openai/v1` | fast / cheap         |
+| OpenRouter | `https://openrouter.ai/api/v1`   | many models          |
+| Ollama     | `http://localhost:11434/v1`      | local; key can be any|
 
-This application is intended for educational and experimental purposes only. Use it responsibly and adhere to Reddit's guidelines and terms of service. Excessive automation and misuse may lead to account suspension or other penalties imposed by Reddit.
+## CLI
+
+```bash
+rcopilot init
+rcopilot fetch
+rcopilot draft [--account NAME]
+rcopilot serve [--port 8000] [--ui-port 3000] [--api-only] [--with-worker]
+rcopilot run                 # discover + draft + due schedules, looping
+rcopilot approve --id N
+rcopilot reject --id N
+rcopilot post [--id N]
+```
+
+`rcopilot serve` starts the API and Next.js UI together. Use `--api-only` when developing the frontend separately.
+
+## Project layout
+
+```
+rcopilot/     # FastAPI, PRAW, LLM, SQLite, worker
+web/          # Next.js review desk
+tests/        # pytest
+PRODUCT.md    # product plan / roadmap
+DESIGN.md     # UI design system
+```
+
+## Responsible use
+
+- Always review drafts before posting.
+- Respect each subreddit’s rules and culture — don’t spam or hard-sell.
+- Keep rate limits conservative; Reddit may still rate-limit or restrict script apps.
+- This tool does **not** use proxies, vote manipulation, or unattended auto-commenting.
+
+## Contributing
+
+Issues and PRs are welcome. For larger changes, open an issue first so we can align on scope.
+
+```bash
+pip install -e ".[dev]"
+pytest
+cd web && npm install && npm run lint
+```
+
+## Roadmap
+
+See [PRODUCT.md](PRODUCT.md). Current focus: intent discovery, review desk, outcomes, and safe scheduling.
+
+## License
+
+[MIT](LICENSE) © Meet Sonawane
