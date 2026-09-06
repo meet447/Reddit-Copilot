@@ -41,6 +41,7 @@ from rcopilot.pipeline import (
     edit_draft,
     fetch_and_store,
     finish_draft_stream,
+    generate_submission_ideas,
     iter_draft_deltas,
     poll_outcomes,
     post_approved,
@@ -108,6 +109,12 @@ class SubmissionCreateBody(BaseModel):
     subreddit: str
     title: str
     body: str
+    account_name: str | None = None
+
+
+class GenerateSubmissionsBody(BaseModel):
+    count: int = 5
+    subreddits: list[str] | None = None
     account_name: str | None = None
 
 
@@ -506,6 +513,27 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         draft = store.get_draft(draft_id)
         return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
+
+    @app.post("/api/submissions/generate")
+    def generate_submissions(body: GenerateSubmissionsBody) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            ids = generate_submission_ideas(
+                config,
+                store,
+                count=body.count,
+                subreddits=body.subreddits,
+                account_name=body.account_name,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        drafts = [
+            _serialize_draft(d, product=config.voice.product)
+            for d in (store.get_draft(i) for i in ids)
+            if d is not None
+        ]
+        return {"created": len(drafts), "drafts": drafts}
 
     @app.get("/api/best-times")
     def best_times(

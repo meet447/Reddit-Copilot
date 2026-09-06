@@ -16,6 +16,7 @@ from rcopilot.llm import (
     finalize_comment,
     generate_comment,
     generate_search_queries,
+    generate_submission,
     iter_comment_deltas,
 )
 from rcopilot.scoring import apply_scores
@@ -403,6 +404,56 @@ def create_submission_draft(
         detail={"subreddit": cleaned_sub, "title": cleaned_title},
     )
     return draft_id
+
+
+def generate_submission_ideas(
+    config: AppConfig,
+    store: Store,
+    *,
+    count: int = 5,
+    subreddits: list[str] | None = None,
+    account_name: str | None = None,
+) -> list[int]:
+    """Ask the LLM for original self-posts across configured subreddits."""
+    store.ensure_schema()
+    if not config.llm.api_key:
+        raise ValueError("Missing LLM_API_KEY in .env (or llm.api_key in config)")
+    if count < 1 or count > 20:
+        raise ValueError("count must be between 1 and 20")
+
+    account = _resolve_account(config, account_name)
+    pool = [s.strip().lstrip("r/") for s in (subreddits or config.subreddits) if s.strip()]
+    if not pool:
+        raise ValueError("No subreddits configured — add some in Settings")
+
+    created_ids: list[int] = []
+    for index in range(count):
+        subreddit = pool[index % len(pool)]
+        try:
+            title, body = generate_submission(
+                config.llm,
+                subreddit=subreddit,
+                **_voice_kwargs(config),
+            )
+            draft_id = store.create_submission_draft(
+                account_name=account.name,
+                subreddit=subreddit,
+                title=title,
+                body=body,
+            )
+            store.add_audit(
+                "submission_generated",
+                draft_id=draft_id,
+                detail={"subreddit": subreddit, "title": title},
+            )
+            created_ids.append(draft_id)
+        except Exception as exc:
+            logger.warning("Failed to generate submission for r/%s: %s", subreddit, exc)
+            store.add_audit(
+                "submission_generate_error",
+                detail={"subreddit": subreddit, "error": str(exc)},
+            )
+    return created_ids
 
 
 def schedule_draft(store: Store, draft_id: int, run_at: datetime) -> None:

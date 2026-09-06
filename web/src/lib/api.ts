@@ -269,6 +269,16 @@ export function createSubmission(input: {
   });
 }
 
+export function generateSubmissions(input?: {
+  count?: number;
+  subreddits?: string[];
+}): Promise<{ created: number; drafts: Draft[] }> {
+  return request("/api/submissions/generate", {
+    method: "POST",
+    body: JSON.stringify({ count: input?.count ?? 5, subreddits: input?.subreddits }),
+  });
+}
+
 export async function getBestTimes(
   subreddit: string,
   opts?: { count?: number },

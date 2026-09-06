@@ -84,6 +84,15 @@ export function IconPlus(props: IconProps) {
   );
 }
 
+export function IconPosts(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M7 3h8l4 4v14H7z" />
+      <path d="M15 3v4h4M10 12h6M10 16h6" />
+    </Icon>
+  );
+}
+
 export function IconX(props: IconProps) {
   return (
     <Icon {...props}>

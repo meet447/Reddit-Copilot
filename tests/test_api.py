@@ -158,3 +158,23 @@ def test_best_times_mocked(client: TestClient, monkeypatch: pytest.MonkeyPatch) 
     assert len(data["suggestions"]) == 2
     assert "run_at" in data["suggestions"][0]
     assert "label" in data["suggestions"][0]
+
+
+def test_generate_submissions_api(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "rcopilot.pipeline.generate_submission",
+        lambda llm, *, subreddit, **kwargs: (
+            f"Idea for {subreddit}",
+            f"Body about {subreddit}",
+        ),
+    )
+    # Ensure API config has an llm key and subreddits via env already from fixture
+    response = client.post("/api/submissions/generate", json={"count": 2})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["created"] == 2
+    assert len(data["drafts"]) == 2
+    assert data["drafts"][0]["kind"] == "submission"
+    assert data["drafts"][0]["title"].startswith("Idea for")

@@ -11,11 +11,13 @@ import {
   IconCalendar,
   IconActivity,
   IconSettings,
+  IconPosts,
 } from "@/components/ui/icons";
 
 const navItems = [
   { href: "/queue", label: "Queue", icon: IconQueue },
   { href: "/discover", label: "Discover", icon: IconCompass },
+  { href: "/posts", label: "Posts", icon: IconPosts },
   { href: "/schedule", label: "Schedule", icon: IconCalendar },
   { href: "/activity", label: "Activity", icon: IconActivity },
 ];

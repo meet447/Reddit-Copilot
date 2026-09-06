@@ -218,6 +218,83 @@ def fallback_search_queries(product: str, keywords: list[str], *, limit: int = Q
     return queries[:limit]
 
 
+SUBMISSION_PROMPT = """Write an original Reddit self-post for r/{subreddit}.
+
+Your background (use lightly — this is not a pitch post):
+Product/context: {product}
+Tone: {tone}
+Persona: {persona}
+Things to avoid: {avoid}
+
+Hard rules:
+1. Invent a genuine discussion-style self-post that fits r/{subreddit}. Prefer questions, lessons learned, or concrete experiences.
+2. Title: under 120 characters, natural Reddit tone, no clickbait ALL CAPS.
+3. Body: about 2–6 short paragraphs. First person, contractions OK. Fragments OK.
+4. No markdown headings, no bullet lists, no bold labels.
+5. Never use em dashes (—) or en dashes (–).
+6. Do not pitch the product. Mention it only if it fits naturally in one short clause, never as the point of the post.
+7. Do not wrap the whole post in quotes.
+8. Vary the angle — do not recycle the same opener every time.
+
+Return ONLY a JSON object with keys "title" and "body". No markdown fence."""
+
+
+def parse_submission_payload(raw: str, *, product: str = "") -> tuple[str, str]:
+    """Parse title/body JSON from an LLM submission response."""
+    text = _strip_enclosing_quotes(raw)
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("LLM did not return a JSON object for the submission")
+    data = json.loads(text[start : end + 1])
+    if not isinstance(data, dict):
+        raise ValueError("LLM submission payload was not an object")
+    title = _strip_enclosing_quotes(str(data.get("title") or ""))
+    body = _strip_enclosing_quotes(str(data.get("body") or ""))
+    if not title:
+        raise ValueError("LLM submission missing title")
+    if not body:
+        raise ValueError("LLM submission missing body")
+    body = finalize_comment(body, product=product)
+    return title[:300], body
+
+
+def generate_submission(
+    llm_config: LLMConfig,
+    *,
+    subreddit: str,
+    product: str = "",
+    tone: str = "",
+    persona: str = "",
+    avoid: str = "",
+) -> tuple[str, str]:
+    """Generate an original self-post title and body for a subreddit."""
+    cleaned = subreddit.strip().lstrip("r/")
+    prompt = SUBMISSION_PROMPT.format_map(
+        SafeDict(
+            subreddit=cleaned,
+            product=product or "(not described)",
+            tone=tone or "(none)",
+            persona=persona or "(none)",
+            avoid=avoid or "(none)",
+        )
+    )
+    client = OpenAI(base_url=llm_config.base_url, api_key=llm_config.api_key)
+    logger.info("Generating submission idea for r/%s with model %s", cleaned, llm_config.model)
+    response = client.chat.completions.create(
+        model=llm_config.model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=1.0,
+    )
+    content = response.choices[0].message.content if response.choices else None
+    if not content or not content.strip():
+        raise RuntimeError("LLM returned an empty submission")
+    return parse_submission_payload(content, product=product)
+
+
 def generate_search_queries(
     llm_config: LLMConfig,
     *,
