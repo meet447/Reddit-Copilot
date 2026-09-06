@@ -9,6 +9,7 @@ import re
 from openai import OpenAI
 
 from rcopilot.config import LLMConfig, SafeDict
+from rcopilot.draft_lint import apply_lint
 from rcopilot.scoring import intent_terms_from_product
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ def generate_comment(
     response = client.chat.completions.create(
         model=llm_config.model,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
+        temperature=0.95,
     )
 
     content = response.choices[0].message.content if response.choices else None
@@ -76,8 +77,17 @@ def generate_comment(
     if not result:
         raise RuntimeError("LLM returned an empty response after cleanup")
 
-    logger.debug("Generated comment (%d chars)", len(result))
-    return result
+    lint = apply_lint(result, product=product)
+    if "empty" in lint.codes:
+        raise RuntimeError("LLM draft was empty after anti-slop cleanup")
+    remaining = lint.codes - {"em_dash", "bot_phrase"}
+    if remaining:
+        logger.warning("Draft lint issues after cleanup: %s", sorted(remaining))
+    elif lint.codes:
+        logger.info("Draft auto-cleaned: %s", sorted(lint.codes))
+
+    logger.debug("Generated comment (%d chars)", len(lint.cleaned))
+    return lint.cleaned
 
 
 def parse_query_list(raw: str, *, limit: int = QUERY_LIMIT) -> list[str]:

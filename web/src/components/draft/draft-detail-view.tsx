@@ -237,6 +237,14 @@ export function DraftDetailView({ id }: { id: number }) {
                 </span>
               </Notice>
             )}
+            {body === draft.body &&
+              (draft.lint_warnings?.length ?? 0) > 0 && (
+                <Notice tone="honey">
+                  Slop check:{" "}
+                  {draft.lint_warnings!.map((w) => w.message).join(" · ")} Edit
+                  before posting.
+                </Notice>
+              )}
 
             <Field className="flex min-h-0 flex-1 flex-col">
               <Label htmlFor="draft-body" className="shrink-0">

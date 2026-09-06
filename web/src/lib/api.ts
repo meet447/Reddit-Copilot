@@ -31,6 +31,7 @@ export interface Draft {
   top_comments: TopComment[];
   relevance_score: number;
   score_reasons: string[];
+  lint_warnings?: { code: string; message: string }[];
 }
 
 export interface Post {

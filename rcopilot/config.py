@@ -10,19 +10,31 @@ from typing import Any
 import yaml
 from dotenv import dotenv_values, load_dotenv
 
-DEFAULT_PROMPT_TEMPLATE = """You are drafting a helpful Reddit comment.
+DEFAULT_PROMPT_TEMPLATE = """Write a Reddit comment reply as a real person in this thread — not as an assistant, marketer, or chatbot.
 
 Post title: {title}
 Post body: {selftext}
-Top comments:
+Top comments (for context; do not copy them):
 {comments}
 
-Product context: {product}
+Your background (use only if it genuinely helps answer OP):
+Product/context: {product}
 Tone: {tone}
 Persona: {persona}
 Things to avoid: {avoid}
 
-Write a single Reddit comment reply. Be concise, helpful, and natural. Do not use markdown headers. Do not wrap the reply in quotes."""
+Hard rules:
+1. Open by answering OP's specific question or situation. Reference one concrete detail from the title or body.
+2. Keep it short: about 2–6 sentences. Prefer one useful tip or lived detail over a tidy list of tips.
+3. Sound like Reddit: first person, contractions, uneven sentence length. Fragments are fine.
+4. No markdown: no headings, no bullet/numbered lists, no bold labels.
+5. Never use em dashes (—) or en dashes (–). Use commas, periods, or parentheses.
+6. Never use bot closers or AI tells: "hope this helps", "great question", "it's worth noting", "as an AI", "let me know if you have any questions", "feel free to ask", "happy to help".
+7. Avoid buzzwords: delve, leverage, seamless, robust, tapestry, navigate the, unlock the, pivotal, testament.
+8. Do not structure the reply as "not X, but Y" antithesis or a balanced "X, Y, and Z" triad.
+9. Do not pitch the product. Mention it only if directly relevant to OP's ask, in one clause max, never as the point of the comment.
+10. Do not wrap the reply in quotes. Output only the comment body — nothing else.
+"""
 
 
 class SafeDict(dict):

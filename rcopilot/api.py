@@ -30,6 +30,7 @@ from rcopilot.config import (
     write_env_secrets,
 )
 from rcopilot import reddit_client
+from rcopilot.draft_lint import lint_draft
 from rcopilot.pipeline import (
     approve_draft,
     cancel_schedule,
@@ -110,8 +111,13 @@ class OAuthStartBody(BaseModel):
     next: str | None = None
 
 
-def _serialize_draft(draft: dict[str, Any]) -> dict[str, Any]:
-    return {key: draft.get(key) for key in DRAFT_API_FIELDS}
+def _serialize_draft(draft: dict[str, Any], *, product: str = "") -> dict[str, Any]:
+    data = {key: draft.get(key) for key in DRAFT_API_FIELDS}
+    lint = lint_draft(str(draft.get("body") or ""), product=product)
+    data["lint_warnings"] = [
+        {"code": issue.code, "message": issue.message} for issue in lint.issues
+    ]
+    return data
 
 
 def _serialize_post(post: dict[str, Any]) -> dict[str, Any]:
@@ -206,7 +212,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         store = get_store(config)
         filter_status = None if status == "all" else status
         drafts = store.list_drafts(status=filter_status)
-        return {"drafts": [_serialize_draft(d) for d in drafts]}
+        return {"drafts": [_serialize_draft(d, product=config.voice.product) for d in drafts]}
 
     @app.get("/api/drafts/{draft_id}")
     def get_draft(draft_id: int) -> dict[str, Any]:
@@ -215,7 +221,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         draft = store.get_draft(draft_id)
         if draft is None:
             raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
-        return _serialize_draft(draft)
+        return _serialize_draft(draft, product=config.voice.product)
 
     @app.patch("/api/drafts/{draft_id}")
     def patch_draft(draft_id: int, body: DraftEditBody) -> dict[str, Any]:
@@ -226,7 +232,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         draft = store.get_draft(draft_id)
-        return _serialize_draft(draft)  # type: ignore[arg-type]
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
 
     @app.post("/api/drafts/{draft_id}/approve")
     def approve(draft_id: int, body: ApproveBody | None = None) -> dict[str, Any]:
@@ -240,7 +246,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         draft = store.get_draft(draft_id)
-        return _serialize_draft(draft)  # type: ignore[arg-type]
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
 
     @app.post("/api/drafts/{draft_id}/reject")
     def reject(draft_id: int) -> dict[str, Any]:
@@ -251,7 +257,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         draft = store.get_draft(draft_id)
-        return _serialize_draft(draft)  # type: ignore[arg-type]
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
 
     @app.post("/api/drafts/{draft_id}/regenerate")
     def regenerate(draft_id: int) -> dict[str, Any]:
@@ -264,7 +270,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         draft = store.get_draft(draft_id)
-        return _serialize_draft(draft)  # type: ignore[arg-type]
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
 
     @app.post("/api/drafts/{draft_id}/post")
     def post_draft(draft_id: int) -> dict[str, Any]:
@@ -282,7 +288,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 raise HTTPException(status_code=400, detail=result.get("error", "Rate limited"))
             raise HTTPException(status_code=400, detail=result.get("error", "Post failed"))
         draft = store.get_draft(draft_id)
-        return {"result": result, "draft": _serialize_draft(draft)}  # type: ignore[arg-type]
+        return {"result": result, "draft": _serialize_draft(draft, product=config.voice.product)}  # type: ignore[arg-type]
 
     @app.post("/api/drafts/{draft_id}/schedule")
     def schedule(draft_id: int, body: ScheduleBody) -> dict[str, Any]:
@@ -296,7 +302,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         draft = store.get_draft(draft_id)
-        return _serialize_draft(draft)  # type: ignore[arg-type]
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
 
     @app.post("/api/drafts/{draft_id}/unschedule")
     def unschedule(draft_id: int) -> dict[str, Any]:
@@ -307,7 +313,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         draft = store.get_draft(draft_id)
-        return _serialize_draft(draft)  # type: ignore[arg-type]
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
 
     @app.get("/api/posts")
     def list_posts(
@@ -332,7 +338,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         draft = store.get_draft(draft_id)
-        return _serialize_draft(draft)  # type: ignore[arg-type]
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
 
     @app.post("/api/posts/{post_id}/skip")
     def skip(post_id: str) -> dict[str, Any]:
@@ -379,7 +385,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         config = get_config()
         store = get_store(config)
         drafts = store.list_scheduled()
-        return {"drafts": [_serialize_draft(d) for d in drafts]}
+        return {"drafts": [_serialize_draft(d, product=config.voice.product) for d in drafts]}
 
     @app.get("/api/activity")
     def get_activity(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
