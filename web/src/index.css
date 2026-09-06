@@ -61,6 +61,7 @@
   --animate-dot: dot 1.4s ease-in-out infinite;
   --animate-talk: talk 0.38s ease-in-out infinite;
   --animate-caret: caret 1s steps(1) infinite;
+  --animate-glance: glance 2.2s ease-in-out infinite;
 }
 
 @keyframes fade-in {
@@ -139,6 +140,20 @@
   50%,
   100% {
     opacity: 0;
+  }
+}
+
+@keyframes glance {
+  0%,
+  22%,
+  100% {
+    transform: translateX(0);
+  }
+  38% {
+    transform: translateX(-3.5px);
+  }
+  62% {
+    transform: translateX(3.5px);
   }
 }
 

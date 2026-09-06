@@ -31,7 +31,7 @@ import { Pill } from "@/components/ui/pill";
 import { Surface } from "@/components/ui/surface";
 import { Kbd, KeyCombo } from "@/components/ui/kbd";
 import { Dots } from "@/components/ui/dots";
-import { Mascot } from "@/components/ui/mascot";
+import { PageStatus } from "@/components/ui/page-status";
 import { PostedDetailView } from "@/components/draft/posted-detail-view";
 import { BestTimeChips } from "@/components/schedule/best-time-chips";
 import { SubredditName } from "@/components/ui/subreddit-name";
@@ -204,9 +204,11 @@ export function DraftDetailView({ id }: { id: number }) {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Mascot mood="thinking" />
-      </div>
+      <PageStatus
+        kind="loading"
+        message="Opening this draft…"
+        className="h-full"
+      />
     );
   }
 

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AppShell } from "@/components/shell/app-shell";
 import { getConfig } from "@/lib/api";
-import { Mascot } from "@/components/ui/mascot";
+import { PageStatus } from "@/components/ui/page-status";
 
 export function ConditionalShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -44,7 +44,7 @@ export function ConditionalShell({ children }: { children: React.ReactNode }) {
   if (!allowed) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas">
-        <Mascot mood="thinking" />
+        <PageStatus kind="loading" message="Opening Reddit Copilot…" />
       </div>
     );
   }

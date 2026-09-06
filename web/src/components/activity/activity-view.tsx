@@ -5,8 +5,7 @@ import { getActivity, type ActivityEvent } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
 import { ApiDownNotice } from "@/components/ui/notice";
 import { Surface } from "@/components/ui/surface";
-import { Mascot } from "@/components/ui/mascot";
-import { AsciiAccent } from "@/components/ui/ascii-accent";
+import { PageStatus } from "@/components/ui/page-status";
 
 export function ActivityView() {
   const [items, setItems] = useState<ActivityEvent[]>([]);
@@ -50,18 +49,12 @@ export function ActivityView() {
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Mascot mood="thinking" />
-          </div>
+          <PageStatus kind="loading" message="Loading activity…" />
         ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <AsciiAccent className="mb-4" />
-            <Mascot mood="neutral" className="mb-4" />
-            <p className="max-w-sm text-[15px] text-ink-2">
-              No activity yet. Actions will show up here as you review and
-              post.
-            </p>
-          </div>
+          <PageStatus
+            kind="empty"
+            message="No activity yet. Actions will show up here as you review and post."
+          />
         ) : (
           <ul className="space-y-2">
             {items.map((item) => (

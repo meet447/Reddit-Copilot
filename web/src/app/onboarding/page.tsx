@@ -1,13 +1,13 @@
 import { Suspense } from "react";
 import { OnboardingFlow } from "@/components/onboarding/onboarding-flow";
-import { Mascot } from "@/components/ui/mascot";
+import { PageStatus } from "@/components/ui/page-status";
 
 export default function OnboardingPage() {
   return (
     <Suspense
       fallback={
         <div className="flex min-h-screen items-center justify-center bg-surface">
-          <Mascot mood="thinking" />
+          <PageStatus kind="loading" message="Getting things ready…" />
         </div>
       }
     >

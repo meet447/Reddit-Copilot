@@ -79,8 +79,9 @@ export function InterviewChat({
             aria-busy="true"
           >
             <Mascot
-              mood="happy"
-              talking
+              mood={setup ? "thinking" : "happy"}
+              talking={!setup}
+              searching={setup}
               size={40}
               className="mt-0.5 shrink-0"
             />

@@ -48,6 +48,7 @@ export function Mascot({
   className,
   animate = true,
   talking = false,
+  searching = false,
   palette = "soft",
 }: {
   mood?: MascotMood;
@@ -55,6 +56,7 @@ export function Mascot({
   className?: string;
   animate?: boolean;
   talking?: boolean;
+  searching?: boolean;
   palette?: keyof typeof palettes;
 }) {
   const face = talking ? "happy" : mood;
@@ -67,10 +69,11 @@ export function Mascot({
       width={size}
       height={size}
       viewBox="0 0 96 96"
+      overflow="visible"
       aria-hidden="true"
       className={cn(
         animate &&
-          (talking
+          (talking || searching
             ? "motion-safe:animate-breathe-talk"
             : "motion-safe:animate-breathe"),
         className,
@@ -78,8 +81,31 @@ export function Mascot({
     >
       <ellipse cx="48" cy="52" rx="36" ry="32" fill={fills.outer} />
       <ellipse cx="48" cy="48" rx="34" ry="30" fill={fills.inner} />
-      <circle cx="36" cy={ey} r="3.5" fill="#1B1B1E" className="motion-safe:animate-blink" style={{ transformOrigin: "36px 42px" }} />
-      <circle cx="60" cy={ey} r="3.5" fill="#1B1B1E" className="motion-safe:animate-blink" style={{ transformOrigin: "60px 42px" }} />
+      <g
+        className={searching ? "motion-safe:animate-glance" : undefined}
+        style={
+          searching
+            ? { transformBox: "fill-box", transformOrigin: "center" }
+            : undefined
+        }
+      >
+        <circle
+          cx="36"
+          cy={ey}
+          r="3.5"
+          fill="#1B1B1E"
+          className={searching ? undefined : "motion-safe:animate-blink"}
+          style={{ transformOrigin: "36px 42px" }}
+        />
+        <circle
+          cx="60"
+          cy={ey}
+          r="3.5"
+          fill="#1B1B1E"
+          className={searching ? undefined : "motion-safe:animate-blink"}
+          style={{ transformOrigin: "60px 42px" }}
+        />
+      </g>
       {face === "thinking" && !talking && (
         <path d="M62 36 Q68 30 72 34" stroke="#E8B44A" strokeWidth="2" fill="none" strokeLinecap="round" />
       )}

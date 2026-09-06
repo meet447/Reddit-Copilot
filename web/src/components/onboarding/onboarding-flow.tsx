@@ -21,6 +21,7 @@ import {
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { MeuxeMark, Mascot } from "@/components/ui/mascot";
+import { PageStatus } from "@/components/ui/page-status";
 import { Field, Label, Input, Textarea, Hint } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { TagInput } from "@/components/ui/tag-input";
@@ -428,7 +429,7 @@ export function OnboardingFlow() {
   if (!ready) {
     return (
       <div className="fixed inset-0 z-40 flex items-center justify-center bg-surface">
-        <Mascot mood="thinking" />
+        <PageStatus kind="loading" message="Getting things ready…" />
       </div>
     );
   }
@@ -462,7 +463,9 @@ export function OnboardingFlow() {
       <main
         className={cn(
           "flex min-h-0 flex-1 flex-col items-center px-6 pb-24",
-          isInterview ? "justify-stretch pt-1" : "justify-center",
+          isInterview
+            ? "justify-stretch pt-1"
+            : "overflow-y-auto justify-start py-2",
         )}
       >
         <div

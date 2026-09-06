@@ -17,7 +17,8 @@ import { IconButton } from "@/components/ui/icon-button";
 import { IconRefresh, IconX } from "@/components/ui/icons";
 import { Field, Label, Input, Textarea, Hint } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
-import { MeuxeMark, Mascot } from "@/components/ui/mascot";
+import { MeuxeMark } from "@/components/ui/mascot";
+import { PageStatus } from "@/components/ui/page-status";
 import { TagInput } from "@/components/ui/tag-input";
 
 const sections = [
@@ -253,9 +254,12 @@ export function SettingsSheet({
             )}
 
             {!loaded && (
-              <div className="flex h-full items-center justify-center py-16">
-                <Mascot mood="thinking" size={72} />
-              </div>
+              <PageStatus
+                kind="loading"
+                message="Loading settings…"
+                size={72}
+                className="h-full py-16"
+              />
             )}
 
             {loaded && section === "accounts" && (

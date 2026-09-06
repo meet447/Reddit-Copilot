@@ -16,8 +16,7 @@ import { Button } from "@/components/ui/button";
 import { ApiDownNotice, Notice } from "@/components/ui/notice";
 import { Pill } from "@/components/ui/pill";
 import { Surface } from "@/components/ui/surface";
-import { Mascot } from "@/components/ui/mascot";
-import { AsciiAccent } from "@/components/ui/ascii-accent";
+import { PageStatus } from "@/components/ui/page-status";
 import { IconDraft, IconPlus } from "@/components/ui/icons";
 import { BestTimeChips } from "@/components/schedule/best-time-chips";
 import { Field, Input, Label } from "@/components/ui/field";
@@ -170,19 +169,20 @@ export function PostsView() {
         {error && <Notice tone="clay">{error}</Notice>}
         {message && <Notice tone="sage">{message}</Notice>}
 
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Mascot mood="thinking" />
-          </div>
+        {loading || busy === "generate" ? (
+          <PageStatus
+            kind="loading"
+            message={
+              busy === "generate"
+                ? "Drafting posts for your communities…"
+                : "Loading posts…"
+            }
+          />
         ) : drafts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <AsciiAccent className="mb-4" />
-            <Mascot mood="neutral" className="mb-4" />
-            <p className="max-w-md text-[15px] text-ink-2">
-              No pending posts yet. Write one manually, or generate a batch for
-              your configured subreddits.
-            </p>
-          </div>
+          <PageStatus
+            kind="empty"
+            message="No pending posts yet. Write one manually, or generate a batch for your configured subreddits."
+          />
         ) : (
           <div className="space-y-3">
             {drafts.map((draft) => (
