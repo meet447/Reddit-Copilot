@@ -5,14 +5,16 @@ import {
   getPosts,
   draftPost,
   skipPost,
+  fetchThreads,
+  ApiError,
   type Post,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { ApiDownNotice } from "@/components/ui/notice";
+import { ApiDownNotice, Notice } from "@/components/ui/notice";
 import { Mascot } from "@/components/ui/mascot";
 import { AsciiAccent } from "@/components/ui/ascii-accent";
 import { Surface } from "@/components/ui/surface";
-import { IconDraft, IconSkip } from "@/components/ui/icons";
+import { IconDraft, IconSkip, IconRefresh } from "@/components/ui/icons";
 import { Input, Field, Label } from "@/components/ui/field";
 
 export function DiscoverView() {
@@ -20,10 +22,13 @@ export function DiscoverView() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [apiDown, setApiDown] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       const data = await getPosts({ undrafted: true, skipped: false });
       setPosts(data);
@@ -32,7 +37,7 @@ export function DiscoverView() {
       setApiDown(true);
       setPosts([]);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
@@ -49,6 +54,32 @@ export function DiscoverView() {
       p.score_reasons?.some((r) => r.toLowerCase().includes(q))
     );
   });
+
+  async function handleFetch() {
+    setFetching(true);
+    setActionError(null);
+    setMessage(null);
+    try {
+      const result = await fetchThreads();
+      await load({ silent: true });
+      setApiDown(false);
+      const count = result.fetched ?? 0;
+      setMessage(
+        count === 0
+          ? "No new threads this round."
+          : `Found ${count} new thread${count === 1 ? "" : "s"}.`,
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status < 500) {
+        setActionError(error.message);
+        setApiDown(false);
+      } else {
+        setApiDown(true);
+      }
+    } finally {
+      setFetching(false);
+    }
+  }
 
   async function handleDraft(postId: string) {
     setBusyId(postId);
@@ -76,17 +107,29 @@ export function DiscoverView() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="shrink-0 border-b border-line px-6 py-4">
-        <h1 className="text-[22px] font-semibold text-ink tracking-tight">
-          Discover
-        </h1>
-        <p className="mt-0.5 text-[13px] text-ink-3">
-          Intent-matched threads waiting for a draft.
-        </p>
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-line px-6 py-4">
+        <div>
+          <h1 className="text-[22px] font-semibold text-ink tracking-tight">
+            Discover
+          </h1>
+          <p className="mt-0.5 text-[13px] text-ink-3">
+            Intent-matched threads waiting for a draft.
+          </p>
+        </div>
+        <Button
+          variant="secondary"
+          leading={<IconRefresh size={16} />}
+          loading={fetching}
+          onClick={handleFetch}
+        >
+          Fetch threads
+        </Button>
       </header>
 
       <div className="shrink-0 border-b border-line px-6 py-4 space-y-3">
         {apiDown && <ApiDownNotice />}
+        {actionError && <Notice tone="clay">{actionError}</Notice>}
+        {message && <Notice tone="sage">{message}</Notice>}
         <Field>
           <Label htmlFor="discover-search" className="sr-only">
             Search results
@@ -110,8 +153,8 @@ export function DiscoverView() {
             <AsciiAccent className="mb-4" />
             <Mascot mood="sleepy" className="mb-4" />
             <p className="max-w-sm text-[15px] text-ink-2">
-              No undrafted threads right now. Run a fetch from the queue or
-              check your subreddit settings.
+              No intent-matched threads right now. Fetch threads, or check
+              subreddits and what you make in Settings.
             </p>
           </div>
         ) : (

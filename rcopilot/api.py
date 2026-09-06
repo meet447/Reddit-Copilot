@@ -319,6 +319,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         posts = store.list_posts(
             undrafted=undrafted if undrafted else None,
             skipped=skipped,
+            min_score=config.discovery.min_score if undrafted else None,
         )
         return {"posts": [_serialize_post(p) for p in posts]}
 
@@ -349,7 +350,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         config = get_config()
         store = get_store(config)
         try:
-            fetched = fetch_and_store(config, store)
+            fetched = fetch_and_store(config, store, config_path=resolved_path)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"fetched": fetched}
@@ -369,7 +370,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         config = get_config()
         store = get_store(config)
         try:
-            return run_once(config, store)
+            return run_once(config, store, config_path=resolved_path)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -413,6 +414,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
             config.discovery = DiscoveryConfig(
                 keywords=body.discovery.get("keywords", config.discovery.keywords),
                 min_score=float(body.discovery.get("min_score", config.discovery.min_score)),
+                search_queries=list(
+                    body.discovery.get("search_queries", config.discovery.search_queries)
+                ),
+                queries_fingerprint=str(
+                    body.discovery.get("queries_fingerprint", config.discovery.queries_fingerprint)
+                    or ""
+                ),
             )
         if body.rate_limits is not None:
             config.rate_limits = RateLimits(

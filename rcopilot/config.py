@@ -69,6 +69,8 @@ class VoiceConfig:
 class DiscoveryConfig:
     keywords: list[str] = field(default_factory=list)
     min_score: float = 0.25
+    search_queries: list[str] = field(default_factory=list)
+    queries_fingerprint: str = ""
 
 
 @dataclass
@@ -168,7 +170,7 @@ def load_config(path: str | Path) -> AppConfig:
 
     return AppConfig(
         subreddits=list(raw.get("subreddits") or []),
-        listing=str(raw.get("listing", "hot")),
+        listing=str(raw.get("listing", "new")),
         fetch_limit=int(raw.get("fetch_limit", 25)),
         db_path=str(raw.get("db_path", "rcopilot.db")),
         accounts=accounts,
@@ -186,6 +188,8 @@ def load_config(path: str | Path) -> AppConfig:
         discovery=DiscoveryConfig(
             keywords=list(discovery_raw.get("keywords") or []),
             min_score=float(discovery_raw.get("min_score", 0.25)),
+            search_queries=[str(item) for item in (discovery_raw.get("search_queries") or []) if str(item).strip()],
+            queries_fingerprint=str(discovery_raw.get("queries_fingerprint") or ""),
         ),
         worker=WorkerConfig(interval_seconds=int(worker_raw.get("interval_seconds", 300))),
         prompt_template=str(raw.get("prompt_template") or DEFAULT_PROMPT_TEMPLATE),
@@ -259,7 +263,7 @@ def write_example_config(path: str | Path) -> None:
     """Write an example config.yaml."""
     example = AppConfig(
         subreddits=["python", "learnpython"],
-        listing="hot",
+        listing="new",
         fetch_limit=25,
         db_path="rcopilot.db",
         accounts=[

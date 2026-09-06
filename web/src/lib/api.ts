@@ -94,6 +94,7 @@ export interface AppConfig {
   discovery: {
     keywords: string[];
     min_score: number;
+    search_queries?: string[];
   };
   worker: {
     interval_seconds: number;
@@ -142,6 +143,7 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
+    cache: "no-store",
     ...options,
     headers: {
       "Content-Type": "application/json",

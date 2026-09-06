@@ -69,7 +69,7 @@ Nothing reaches Reddit until you approve it. Scheduling only delays an approved 
 subreddits:
   - python
   - learnpython
-listing: hot          # hot | new
+listing: new          # new | hot — new is better for unanswered questions
 fetch_limit: 25
 db_path: rcopilot.db
 
@@ -94,6 +94,7 @@ voice:
 discovery:
   keywords: []
   min_score: 0.25
+  # search_queries filled on fetch from the product blurb (LLM) or keywords
 
 worker:
   interval_seconds: 300

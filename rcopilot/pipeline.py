@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from rcopilot import reddit_client
-from rcopilot.config import AppConfig, Account
-from rcopilot.llm import generate_comment
+from rcopilot.config import AppConfig, Account, save_config
+from rcopilot.llm import fallback_search_queries, generate_comment, generate_search_queries
 from rcopilot.scoring import apply_scores
 from rcopilot.store import Store
 
@@ -35,7 +38,58 @@ def _voice_kwargs(config: AppConfig) -> dict[str, str]:
     }
 
 
-def fetch_and_store(config: AppConfig, store: Store) -> int:
+def _queries_fingerprint(config: AppConfig) -> str:
+    payload = {
+        "product": config.voice.product,
+        "persona": config.voice.persona,
+        "keywords": config.discovery.keywords,
+        "subreddits": config.subreddits,
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def ensure_search_queries(
+    config: AppConfig,
+    *,
+    config_path: str | Path | None = None,
+) -> list[str]:
+    """Return cached LLM/fallback search queries, regenerating when voice or keywords change."""
+    fingerprint = _queries_fingerprint(config)
+    cached = [query.strip() for query in config.discovery.search_queries if query.strip()]
+    if cached and config.discovery.queries_fingerprint == fingerprint:
+        return cached
+
+    queries: list[str] = []
+    if config.llm.api_key:
+        try:
+            queries = generate_search_queries(
+                config.llm,
+                product=config.voice.product,
+                keywords=config.discovery.keywords,
+                subreddits=config.subreddits,
+                persona=config.voice.persona,
+            )
+        except Exception:
+            logger.exception("LLM search-query generation failed; using fallback queries")
+
+    if not queries:
+        queries = fallback_search_queries(config.voice.product, config.discovery.keywords)
+
+    config.discovery.search_queries = queries
+    config.discovery.queries_fingerprint = fingerprint
+    if config_path:
+        save_config(config_path, config)
+        logger.info("Saved %d discovery search quer(y/ies) to %s", len(queries), config_path)
+    return queries
+
+
+def fetch_and_store(
+    config: AppConfig,
+    store: Store,
+    *,
+    config_path: str | Path | None = None,
+) -> int:
     """Fetch posts from Reddit, persist, and score them. Returns count of new posts."""
     store.ensure_schema()
     if not config.subreddits:
@@ -53,16 +107,32 @@ def fetch_and_store(config: AppConfig, store: Store) -> int:
         row["id"] for row in store.connect().execute("SELECT id FROM posts").fetchall()
     }
 
+    queries = ensure_search_queries(config, config_path=config_path)
     fetched = reddit_client.fetch_posts(
         reddit,
         config.subreddits,
         config.listing,
         config.fetch_limit,
     )
+    search_limit = min(10, max(5, config.fetch_limit))
+    searched = reddit_client.search_posts(
+        reddit,
+        config.subreddits,
+        queries,
+        limit_per_query=search_limit,
+    )
+
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for post in searched + fetched:
+        if post["id"] in seen:
+            continue
+        seen.add(post["id"])
+        merged.append(post)
 
     new_count = 0
     stored_posts: list[dict[str, Any]] = []
-    for post in fetched:
+    for post in merged:
         is_new = post["id"] not in existing_ids
         store.upsert_post(**post)
         stored_posts.append(store.get_post(post["id"]) or post)
@@ -70,9 +140,23 @@ def fetch_and_store(config: AppConfig, store: Store) -> int:
             existing_ids.add(post["id"])
             new_count += 1
 
-    apply_scores(store, stored_posts, config.discovery)
-    store.add_audit("fetched", detail={"new_count": new_count, "total": len(stored_posts)})
-    logger.info("Stored %d new post(s), scored %d", new_count, len(stored_posts))
+    apply_scores(store, stored_posts, config.discovery, product=config.voice.product)
+    store.add_audit(
+        "fetched",
+        detail={
+            "new_count": new_count,
+            "total": len(stored_posts),
+            "search_queries": queries,
+        },
+    )
+    logger.info(
+        "Stored %d new post(s), scored %d (search=%d listing=%d queries=%d)",
+        new_count,
+        len(stored_posts),
+        len(searched),
+        len(fetched),
+        len(queries),
+    )
     return new_count
 
 
@@ -339,9 +423,14 @@ def post_due_scheduled(config: AppConfig, store: Store) -> list[dict[str, Any]]:
     return results
 
 
-def run_once(config: AppConfig, store: Store) -> dict[str, int]:
+def run_once(
+    config: AppConfig,
+    store: Store,
+    *,
+    config_path: str | Path | None = None,
+) -> dict[str, int]:
     """Run one worker cycle: fetch, draft eligible posts, post due schedules."""
-    fetched = fetch_and_store(config, store)
+    fetched = fetch_and_store(config, store, config_path=config_path)
     drafted = draft_pending(config, store)
     scheduled_results = post_due_scheduled(config, store)
     posted = sum(1 for item in scheduled_results if item.get("ok"))
@@ -351,5 +440,5 @@ def run_once(config: AppConfig, store: Store) -> dict[str, int]:
 def rescore_posts(store: Store, config: AppConfig) -> int:
     """Re-score all posts (useful after config keyword changes)."""
     posts = store.list_posts()
-    apply_scores(store, posts, config.discovery)
+    apply_scores(store, posts, config.discovery, product=config.voice.product)
     return len(posts)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,6 +22,129 @@ QUESTION_STARTS = (
     "recommend",
 )
 
+LOOKING_FOR_PHRASES = (
+    "looking for",
+    "alternative to",
+    "anyone using",
+    "anyone know",
+    "recommend a",
+    "recommend me",
+    "tool for",
+    "app for",
+    "how do you",
+    "what do you use",
+)
+
+_TOKEN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "than",
+        "that",
+        "this",
+        "these",
+        "those",
+        "to",
+        "of",
+        "in",
+        "on",
+        "for",
+        "with",
+        "from",
+        "your",
+        "you",
+        "we",
+        "i",
+        "it",
+        "its",
+        "is",
+        "are",
+        "be",
+        "been",
+        "being",
+        "as",
+        "at",
+        "by",
+        "into",
+        "about",
+        "over",
+        "after",
+        "before",
+        "between",
+        "when",
+        "where",
+        "who",
+        "what",
+        "why",
+        "how",
+        "not",
+        "no",
+        "so",
+        "just",
+        "only",
+        "also",
+        "can",
+        "will",
+        "want",
+        "people",
+        "help",
+        "like",
+        "make",
+        "makes",
+        "using",
+        "use",
+        "used",
+        "dont",
+        "does",
+        "did",
+        "have",
+        "has",
+        "had",
+        "they",
+        "their",
+        "them",
+        "our",
+        "ours",
+        "was",
+        "were",
+        "would",
+        "should",
+        "could",
+        "really",
+        "very",
+        "more",
+        "most",
+        "some",
+        "any",
+        "all",
+    }
+)
+_GENERIC = frozenset(
+    {
+        "reddit",
+        "thread",
+        "threads",
+        "post",
+        "posts",
+        "comment",
+        "comments",
+        "subreddit",
+        "sub",
+        "here",
+        "there",
+        "something",
+        "things",
+        "thing",
+    }
+)
+
 
 def _is_question(title: str) -> bool:
     lowered = title.strip().lower()
@@ -29,16 +153,45 @@ def _is_question(title: str) -> bool:
     return any(lowered.startswith(prefix) for prefix in QUESTION_STARTS)
 
 
-def score_post(post: dict[str, Any], keywords: list[str]) -> tuple[float, list[str], list[str]]:
-    """Score a post 0..1 using simple heuristics.
+def _looking_for_tool(text: str) -> bool:
+    return any(phrase in text for phrase in LOOKING_FOR_PHRASES)
+
+
+def intent_terms_from_product(product: str, *, limit: int = 12) -> list[str]:
+    """Turn a product blurb into short phrases/tokens to match against threads."""
+    tokens = [
+        token
+        for token in _TOKEN.findall(product.lower())
+        if len(token) >= 4 and token not in _STOPWORDS and token not in _GENERIC
+    ]
+    terms: list[str] = []
+    seen: set[str] = set()
+    for left, right in zip(tokens, tokens[1:]):
+        phrase = f"{left} {right}"
+        if phrase not in seen:
+            seen.add(phrase)
+            terms.append(phrase)
+    for token in tokens:
+        if token not in seen:
+            seen.add(token)
+            terms.append(token)
+    return terms[:limit]
+
+
+def score_post(
+    post: dict[str, Any],
+    keywords: list[str],
+    product: str = "",
+) -> tuple[float, list[str], list[str]]:
+    """Score a post 0..1 using intent heuristics.
 
     Heuristics:
-    - keyword hits in title+selftext (case-insensitive): +0.15 each, cap +0.5
+    - keyword hits in title+selftext: +0.15 each, cap +0.5
+    - product-blurb term hits: +0.12 each, cap +0.36
+    - looking-for-tool phrasing: +0.2
     - question signal: +0.2
     - light discussion (0-1 top comments): +0.15
     - freshness: <6h +0.15, <24h +0.05
-
-    If keywords is empty, skip the keyword component (other signals still apply).
     """
     score = 0.0
     reasons: list[str] = []
@@ -57,6 +210,22 @@ def score_post(post: dict[str, Any], keywords: list[str]) -> tuple[float, list[s
         if keyword_score:
             score += keyword_score
             reasons.append(f"keyword match (+{keyword_score:.2f})")
+
+    product_terms = intent_terms_from_product(product)
+    if product_terms:
+        product_score = 0.0
+        for term in product_terms:
+            if term in text:
+                matched.append(term)
+                product_score += 0.12
+        product_score = min(product_score, 0.36)
+        if product_score:
+            score += product_score
+            reasons.append(f"product match (+{product_score:.2f})")
+
+    if _looking_for_tool(text):
+        score += 0.2
+        reasons.append("looking-for-tool (+0.20)")
 
     title = post.get("title") or ""
     if _is_question(title):
@@ -80,13 +249,22 @@ def score_post(post: dict[str, Any], keywords: list[str]) -> tuple[float, list[s
             score += 0.05
             reasons.append("recent (<24h) (+0.05)")
 
+    if (keywords or product_terms) and not matched:
+        score = min(score, 0.2)
+        reasons.append("weak intent fit (capped)")
+
     return min(score, 1.0), reasons, matched
 
 
-def apply_scores(store: Store, posts: list[dict[str, Any]], discovery: DiscoveryConfig) -> None:
+def apply_scores(
+    store: Store,
+    posts: list[dict[str, Any]],
+    discovery: DiscoveryConfig,
+    product: str = "",
+) -> None:
     """Compute and persist scores for *posts*."""
     for post in posts:
-        score, reasons, matched = score_post(post, discovery.keywords)
+        score, reasons, matched = score_post(post, discovery.keywords, product=product)
         store.update_post(
             post["id"],
             relevance_score=score,

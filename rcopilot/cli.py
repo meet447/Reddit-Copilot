@@ -64,7 +64,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_fetch(args: argparse.Namespace) -> int:
     config, store = _load_store(Path(args.config) if args.config else None)
-    count = fetch_and_store(config, store)
+    count = fetch_and_store(config, store, config_path=Path(args.config) if args.config else _default_config_path())
     print(f"Fetched and stored {count} post(s)")
     return 0
 
@@ -92,7 +92,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         store.ensure_schema()
         worker_thread = threading.Thread(
             target=run_forever,
-            args=(config, store, stop_event),
+            args=(config, store, stop_event, config_path or "config.yaml"),
             daemon=True,
             name="rcopilot-worker",
         )
@@ -115,7 +115,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     config, store = _load_store(Path(args.config) if args.config else None)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     print(f"Starting worker (interval={config.worker.interval_seconds}s)")
-    run_forever(config, store)
+    run_forever(config, store, config_path=str(Path(args.config) if args.config else _default_config_path()))
     return 0
 
 

@@ -15,7 +15,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { IconX } from "@/components/ui/icons";
 import { Field, Label, Input, Textarea, Hint } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
-import { MeuxeMark } from "@/components/ui/mascot";
+import { MeuxeMark, Mascot } from "@/components/ui/mascot";
 
 const sections = [
   { id: "accounts", label: "Accounts" },
@@ -65,11 +65,17 @@ export function SettingsSheet({
   const [llmBaseUrl, setLlmBaseUrl] = useState("");
   const [hasCredentials, setHasCredentials] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [searchQueries, setSearchQueries] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
+    setError(null);
+    setSaved(false);
     getConfig()
       .then((c) => {
+        if (cancelled) return;
         setConfig(c);
         const account = c.accounts?.[0];
         setAccountName(account?.name ?? "default");
@@ -80,6 +86,7 @@ export function SettingsSheet({
         setAvoid(c.voice?.avoid ?? "");
         setSubreddits((c.subreddits ?? []).join(", "));
         setKeywords((c.discovery?.keywords ?? []).join(", "));
+        setSearchQueries((c.discovery?.search_queries ?? []).join("\n"));
         setDailyCap(String(c.rate_limits?.daily_cap ?? ""));
         setMinInterval(String(c.rate_limits?.min_interval_seconds ?? ""));
         setLlmModel(c.llm?.model ?? "");
@@ -90,8 +97,16 @@ export function SettingsSheet({
         setConnectedUsername(account?.connected_username ?? "");
         if (c.oauth_redirect_uri) setRedirectUri(c.oauth_redirect_uri);
         setHasApiKey(c.has_api_key);
+        setLoaded(true);
       })
-      .catch(() => setError("Could not load settings."));
+      .catch(() => {
+        if (cancelled) return;
+        setError("Could not load settings.");
+        setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   useEffect(() => {
@@ -233,17 +248,30 @@ export function SettingsSheet({
               <Notice tone="sage">Settings saved.</Notice>
             )}
 
-            {section === "accounts" && (
+            {!loaded && (
+              <div className="flex h-full items-center justify-center py-16">
+                <Mascot mood="thinking" size={72} />
+              </div>
+            )}
+
+            {loaded && section === "accounts" && (
               <>
-                {hasOAuth && connectedUsername ? (
-                  <Notice tone="sage">Connected as u/{connectedUsername}.</Notice>
-                ) : hasCredentials ? (
-                  <Notice tone="sage">Reddit is connected on this machine.</Notice>
-                ) : hasClientId ? (
-                  <Notice tone="accent">
-                    App credentials are saved. Connect Reddit to finish.
-                  </Notice>
-                ) : null}
+                <Field>
+                  <Label htmlFor="connected-account">Reddit account</Label>
+                  <Input
+                    id="connected-account"
+                    value={connectedUsername ? `u/${connectedUsername}` : ""}
+                    placeholder="Not connected"
+                    readOnly
+                  />
+                  {hasOAuth && connectedUsername ? (
+                    <Hint>Signed in on this machine. Secrets stay in .env.</Hint>
+                  ) : hasCredentials ? (
+                    <Hint>Reddit is connected on this machine. Secrets stay in .env.</Hint>
+                  ) : hasClientId ? (
+                    <Hint>App credentials are saved. Connect Reddit to finish.</Hint>
+                  ) : null}
+                </Field>
                 <Field>
                   <Label htmlFor="user-agent">User agent</Label>
                   <Input
@@ -261,6 +289,9 @@ export function SettingsSheet({
                     onChange={(e) => setRedditClientId(e.target.value)}
                     placeholder={hasClientId ? "Leave blank to keep current" : "From reddit.com/prefs/apps"}
                   />
+                  {hasClientId && (
+                    <Hint>Already saved. Paste a new value only to replace it.</Hint>
+                  )}
                 </Field>
                 <Field>
                   <Label htmlFor="reddit-secret">Client secret</Label>
@@ -286,7 +317,7 @@ export function SettingsSheet({
               </>
             )}
 
-            {section === "voice" && (
+            {loaded && section === "voice" && (
               <>
                 <Field>
                   <Label htmlFor="product-desc">Product description</Label>
@@ -327,7 +358,7 @@ export function SettingsSheet({
               </>
             )}
 
-            {section === "discovery" && (
+            {loaded && section === "discovery" && (
               <>
                 <Field>
                   <Label htmlFor="subreddits">Subreddits</Label>
@@ -348,10 +379,25 @@ export function SettingsSheet({
                     placeholder="looking for tool, alternative to"
                   />
                 </Field>
+                {searchQueries && (
+                  <Field>
+                    <Label htmlFor="search-queries">Search queries</Label>
+                    <Textarea
+                      id="search-queries"
+                      value={searchQueries}
+                      readOnly
+                      rows={6}
+                    />
+                    <Hint>
+                      Generated from your product and keywords. Refreshed on fetch
+                      when those change.
+                    </Hint>
+                  </Field>
+                )}
               </>
             )}
 
-            {section === "rate_limits" && (
+            {loaded && section === "rate_limits" && (
               <>
                 <Field>
                   <Label htmlFor="max-posts">Daily cap</Label>
@@ -377,7 +423,7 @@ export function SettingsSheet({
               </>
             )}
 
-            {section === "llm" && (
+            {loaded && section === "llm" && (
               <>
                 {hasApiKey && (
                   <Notice tone="sage">An LLM key is already saved in .env.</Notice>
@@ -414,7 +460,7 @@ export function SettingsSheet({
               </>
             )}
 
-            {section === "about" && (
+            {loaded && section === "about" && (
               <div className="space-y-3 text-[14px] text-ink-2 leading-relaxed">
                 <p className="text-[18px] font-semibold text-ink tracking-tight">
                   Reddit Copilot
@@ -435,7 +481,7 @@ export function SettingsSheet({
               <Button variant="ghost" onClick={onClose}>
                 Cancel
               </Button>
-              <Button loading={saving} onClick={handleSave}>
+              <Button loading={saving} disabled={!loaded} onClick={handleSave}>
                 Save changes
               </Button>
             </div>

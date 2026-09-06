@@ -21,6 +21,7 @@ def run_forever(
     config: AppConfig,
     store: Store,
     stop_event: threading.Event | None = None,
+    config_path: str | None = None,
 ) -> None:
     """Run fetch+draft+schedule loop until *stop_event* is set."""
     store.ensure_schema()
@@ -32,7 +33,7 @@ def run_forever(
             break
 
         try:
-            counts = run_once(config, store)
+            counts = run_once(config, store, config_path=config_path)
             logger.info(
                 "Worker cycle complete: fetched=%d drafted=%d posted=%d",
                 counts["fetched"],

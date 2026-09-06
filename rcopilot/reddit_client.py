@@ -80,6 +80,25 @@ def _top_comments(submission: praw.models.Submission, limit: int = 4) -> list[di
     return comments[:limit]
 
 
+def _submission_to_post(
+    submission: praw.models.Submission,
+    *,
+    subreddit_name: str | None = None,
+    include_comments: bool = True,
+) -> dict[str, Any]:
+    name = subreddit_name or str(getattr(submission.subreddit, "display_name", "") or submission.subreddit)
+    return {
+        "id": submission.id,
+        "subreddit": name,
+        "title": submission.title or "",
+        "selftext": submission.selftext or "",
+        "url": submission.url or "",
+        "permalink": f"https://www.reddit.com{submission.permalink}",
+        "created_utc": float(submission.created_utc or 0),
+        "top_comments": _top_comments(submission) if include_comments else [],
+    }
+
+
 def fetch_posts(
     reddit: praw.Reddit,
     subreddits: list[str],
@@ -102,21 +121,49 @@ def fetch_posts(
             if submission.id in seen:
                 continue
             seen.add(submission.id)
-
-            posts.append(
-                {
-                    "id": submission.id,
-                    "subreddit": subreddit_name,
-                    "title": submission.title or "",
-                    "selftext": submission.selftext or "",
-                    "url": submission.url or "",
-                    "permalink": f"https://www.reddit.com{submission.permalink}",
-                    "created_utc": float(submission.created_utc or 0),
-                    "top_comments": _top_comments(submission),
-                }
-            )
+            posts.append(_submission_to_post(submission, subreddit_name=subreddit_name))
 
     logger.info("Fetched %d posts from %d subreddit(s)", len(posts), len(subreddits))
+    return posts
+
+
+def search_posts(
+    reddit: praw.Reddit,
+    subreddits: list[str],
+    queries: list[str],
+    *,
+    limit_per_query: int = 10,
+) -> list[dict[str, Any]]:
+    """Search configured subreddits with LLM/fallback queries."""
+    cleaned = [query.strip() for query in queries if query and query.strip()]
+    if not subreddits or not cleaned:
+        return []
+
+    combo = "+".join(subreddits)
+    target = reddit.subreddit(combo)
+    posts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for query in cleaned:
+        logger.info("Searching r/%s for %r (limit=%d)", combo, query, limit_per_query)
+        try:
+            iterator = target.search(
+                query,
+                sort="new",
+                time_filter="month",
+                limit=limit_per_query,
+            )
+        except Exception as exc:
+            logger.exception("Search failed for %r: %s", query, exc)
+            continue
+
+        for submission in iterator:
+            if submission.id in seen:
+                continue
+            seen.add(submission.id)
+            posts.append(_submission_to_post(submission, include_comments=False))
+
+    logger.info("Search returned %d post(s) from %d quer(y/ies)", len(posts), len(cleaned))
     return posts
 
 

@@ -1,7 +1,7 @@
 subreddits:
   - python
   - learnpython
-listing: hot   # hot | new
+listing: new   # new | hot — prefer new for unanswered intent threads
 fetch_limit: 25
 db_path: rcopilot.db
 
@@ -28,6 +28,7 @@ voice:
 discovery:
   keywords: []
   min_score: 0.25
+  # search_queries are filled on fetch (LLM, or keyword fallback)
 
 worker:
   interval_seconds: 300
