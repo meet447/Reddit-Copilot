@@ -56,7 +56,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     print("  1. Create a Reddit web app with redirect URI:")
     print("     http://127.0.0.1:8000/api/oauth/callback")
     print("  2. rcopilot serve")
-    print("  3. Open http://127.0.0.1:3000 and finish onboarding")
+    print("  3. Open http://localhost:3000 and finish onboarding")
+    print("     (Connect Reddit + LLM, pick a purpose, brief the workspace)")
     return 0
 
 

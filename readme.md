@@ -6,17 +6,17 @@
 
 <p align="center">
   <strong>Local-first Reddit engagement assistant</strong><br />
-  Finds intent threads. Drafts replies in your voice. Nothing posts without you.
+  Finds intent threads for a workspace you brief once. Drafts in that voice. Nothing posts without you.
 </p>
 
 <p align="center">
-  <a href="https://github.com/meet447/Reddit-Karma-Bot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="https://github.com/meet447/Reddit-Copilot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+" /></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/ui-Next.js-black.svg" alt="Next.js" /></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/api-FastAPI-009688.svg" alt="FastAPI" /></a>
   <img src="https://img.shields.io/badge/status-early%20development-orange.svg" alt="Status: early development" />
-  <a href="https://github.com/meet447/Reddit-Karma-Bot/stargazers"><img src="https://img.shields.io/github/stars/meet447/Reddit-Karma-Bot?style=social" alt="GitHub stars" /></a>
-  <a href="https://github.com/meet447/Reddit-Karma-Bot/issues"><img src="https://img.shields.io/github/issues/meet447/Reddit-Karma-Bot" alt="GitHub issues" /></a>
+  <a href="https://github.com/meet447/Reddit-Copilot/stargazers"><img src="https://img.shields.io/github/stars/meet447/Reddit-Copilot?style=social" alt="GitHub stars" /></a>
+  <a href="https://github.com/meet447/Reddit-Copilot/issues"><img src="https://img.shields.io/github/issues/meet447/Reddit-Copilot" alt="GitHub issues" /></a>
 </p>
 
 <p align="center">
@@ -36,12 +36,14 @@
 
 Formerly **Reddit-Karma-Bot** — rebuilt as a **human-in-the-loop** copilot, not a karma farmer.
 
-Python owns Reddit, the LLM, SQLite, and the worker. Next.js owns the review desk. Your OAuth tokens stay on your machine.
+Python owns Reddit, the LLM, SQLite, and the worker. Next.js owns the review desk. Your OAuth tokens stay on your machine. Reddit sign-in and the LLM key are **account-level**; each **workspace** (product, personal, or custom) has its own briefing, communities, drafts, and queue.
 
 ## Features
 
+- **Workspaces** — brief a product, yourself, or a custom aim; switch without mixing queues
 - **Discover** — fetch and rank intent threads (questions, looking-for-tool, complaints, unanswered)
-- **Review queue** — Add threads, stream a draft in your voice, edit, then **Post** or **Schedule**
+- **Review queue** — Add threads, stream a draft, edit, then **Post** or **Schedule**
+- **Original posts** — write or generate a self-post, then post now or schedule
 - **Outcomes** — poll posted comments for score, replies, and removals
 - **Local-first** — SQLite + `.env`; no cloud required
 - **OpenAI-compatible LLMs** — OpenAI, Groq, OpenRouter, or Ollama
@@ -51,8 +53,8 @@ Python owns Reddit, the LLM, SQLite, and the worker. Next.js owns the review des
 Needs **Python 3.10+** and **Node.js 20+**.
 
 ```bash
-git clone https://github.com/meet447/Reddit-Karma-Bot.git
-cd Reddit-Karma-Bot
+git clone https://github.com/meet447/Reddit-Copilot.git
+cd Reddit-Copilot
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
@@ -61,11 +63,13 @@ rcopilot init
 rcopilot serve              # API :8000 + UI :3000 (runs npm install once if needed)
 ```
 
-Open http://127.0.0.1:3000 and finish **onboarding** (Reddit web app, Connect Reddit, product voice, subreddits, LLM).
+Open **http://localhost:3000** (not `127.0.0.1` — the Next.js app blocks that origin).
 
-Create the Reddit app at https://www.reddit.com/prefs/apps with redirect URI:
-
-`http://127.0.0.1:8000/api/oauth/callback`
+1. Create a Reddit **web** app at https://www.reddit.com/prefs/apps  
+   Redirect URI must match exactly: `http://127.0.0.1:8000/api/oauth/callback`
+2. Connect Reddit and an OpenAI-compatible LLM key
+3. Pick a purpose (product / personal / custom), talk to the briefing agent, review communities
+4. Fetch threads, add a few to the queue, draft, then **Post** or **Schedule**
 
 Optional: `rcopilot serve --with-worker` to keep discovery/schedules running in the background.
 
@@ -93,27 +97,27 @@ rcopilot post      # publish ready drafts
 ## How it works
 
 ```
-Discover → Add / Skip → Draft / Edit → Post now | Schedule → Outcomes
+Workspace briefing → Discover → Add / Skip → Draft / Edit → Post now | Schedule | Original post → Outcomes
 ```
 
 ```
 config.yaml + .env
         │
         ▼
-   rcopilot fetch / run ──► SQLite (posts, scores, drafts, jobs, audit)
+   rcopilot fetch / run ──► SQLite (workspaces, posts, scores, drafts, jobs, audit)
         │
    rcopilot serve  ── JSON ──► Next.js review UI (web/)
         │
-   you Post / Schedule  ──► Reddit comment (with outcome polling later)
+   you Post / Schedule  ──► Reddit comment or self-post
 ```
 
-Nothing reaches Reddit until you hit **Post** or **Schedule**. Scheduling only delays a reply you’ve already written.
+Nothing reaches Reddit until you hit **Post** or **Schedule**. Scheduling only delays something you’ve already written.
 
 ## Configuration
 
 You don’t need to edit config by hand for normal use. **Onboarding** (and later **Settings**) write:
 
-- `config.yaml` — subreddits, voice, discovery, LLM model/base URL, rate limits
+- `config.yaml` — active workspace, subreddits, voice/briefing, discovery, LLM model/base URL, rate limits
 - `.env` — Reddit client id/secret, refresh token after Connect Reddit, LLM API key
 
 Advanced defaults and a full example live in [`config.example.yaml`](config.example.yaml). Named accounts can use `REDDIT_<NAME>_CLIENT_ID` (and matching secret/refresh token). Password grant (`REDDIT_USERNAME` / `REDDIT_PASSWORD`) still works as a fallback for script apps.
@@ -173,7 +177,7 @@ cd web && npm install && npm run lint
 
 ## Roadmap
 
-See [PRODUCT.md](PRODUCT.md). Current focus: intent discovery, review desk, outcomes, and safe scheduling.
+See [PRODUCT.md](PRODUCT.md). Phase 1 is done. Next: draft variants and a weekly digest.
 
 ## License
 

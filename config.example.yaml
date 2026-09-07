@@ -35,6 +35,7 @@ worker:
 
 onboarding_complete: false
 onboarding_step: 0
+# Workspaces live in SQLite. This is the one Discover / Queue / Posts use.
 active_project_id: ""
 
 # Must match the Reddit web app redirect URI exactly

@@ -1,7 +1,7 @@
 [project]
 name = "reddit-copilot"
 version = "1.0.0"
-description = "Human-in-the-loop Reddit reply drafter"
+description = "Local-first Reddit engagement assistant — workspaces, intent discovery, human-in-the-loop posting"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

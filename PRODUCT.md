@@ -1,6 +1,6 @@
 # Reddit Copilot — Product Plan
 
-**Status:** Final  
+**Status:** Phase 1 complete. Phase 2 next (draft variants, digest).  
 **Product:** Open-source, local-first Reddit engagement assistant  
 **Later:** Optional hosted cloud service
 
@@ -89,7 +89,7 @@ Users live in **Discover + the review queue**, not on reddit.com. Reddit sign-in
 
 ## Feature map
 
-### P0 — Revival (OSS v1)
+### P0 — Revival (OSS v1) — shipped
 
 | Feature | Pillar | Why it matters |
 |--------|--------|----------------|
@@ -178,7 +178,7 @@ Same loop. Human still chooses every publish. Cloud hosts the worker, not the ju
 
 | Phase | Weeks | Focus | Exit criteria |
 |------|-------|-------|---------------|
-| **1 — Revival** | 1–4 | P0: workspaces + agent briefing + auto discover + Add/Skip + streamed draft review + original posts + schedule + docs/demo | Cold quickstart works; 10 external users posted or scheduled via the tool; Show HN / r/SideProject |
+| **1 — Revival** | 1–4 | P0: workspaces + agent briefing + auto discover + Add/Skip + streamed draft review + original posts + schedule + docs | **Done.** Dogfood posted/scheduled from a product workspace; Show HN / r/SideProject |
 | **2 — Differentiate** | 5–10 | Question radar, variants, digest, first-class Ollama, multi-account | ≥40% post rate from queued threads; 50 WAU; 3 “switched from X” notes |
 | **3 — Compound** | 11–18 | Saved searches, follow-ups, memory, calendar, plugins, export | 100 WAU; community PRs; cloud waitlist ≥200 |
 | **4 — Cloud alpha** | 19–28 | Hosted discover/schedule runner + mobile review; paid from day one | 20 paying users; no ToS incidents; decide continue vs OSS-only |
@@ -265,25 +265,16 @@ web/               # Next.js review app
 
 ---
 
-## Open decisions (non-blocking for Phase 1)
+## Open decisions (non-blocking for Phase 2)
 
-1. **Name** — keep *Reddit Copilot*, or rename before launch?
-2. **License** — MIT (max adoption) vs AGPL (harder for someone else to host a clone)?
-3. **Telemetry** — opt-in anonymous usage in OSS, or fly blind on stars/issues?
-4. **Cloud API** — at Phase 4, apply for commercial Reddit API, or stay BYO-credentials forever?
-5. **Dogfood** — use it on a real account and publish outcomes as launch proof?
+1. **Name** — keep *Reddit Copilot*, or rename later?
+2. **Telemetry** — opt-in anonymous usage in OSS, or fly blind on stars/issues?
+3. **Cloud API** — at Phase 4, apply for commercial Reddit API, or stay BYO-credentials forever?
 
 ---
 
 ## Final recommendation (locked)
 
-Ship **Phase 1 around Maya’s product workspace**, without locking everyone into “a company”:
-
-1. **Workspace briefing** (purpose + agent interview) so discovery and drafts know what this copilot is for
-2. **Autonomous discover** of intent threads for that workspace
-3. **Human Add / Skip** into a review queue
-4. **On-demand Draft** (streamed) → **edit** → **Post now, Schedule, or compose an original post**
-
-Skip brand alerts. Skip full autonomous posting. Skip auto-drafting every matched thread.
+Phase 1 around Maya’s **product workspace** is done (including dogfood and Show HN / r/SideProject). Keep the human publish gate. Next: Phase 2 (draft variants, digest).
 
 **Product in one sentence:** An autonomous Reddit discovery pipeline, scoped to a workspace you brief once, with on-demand drafting and a human publish gate.

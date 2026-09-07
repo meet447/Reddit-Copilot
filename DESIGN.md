@@ -101,8 +101,8 @@ No drop shadows on cards, sidebar, or queue rows.
 
 - **Canvas** background with **12px** padding.
 - **64px icon rail** on the left:
-  - Top: MeuxeMark / Copilot mark
-  - Middle: Queue, Discover, Schedule, Activity (audit)
+  - Top: MeuxeMark / Copilot mark, then workspace switcher
+  - Middle: Queue, Discover, Posts, Schedule, Activity
   - Bottom: Settings
 - **Main stage:** `rounded-panel` `surface` card filling the rest — this is the active workspace (queue, draft detail, calendar).
 - **Context dock (optional):** on draft detail, a second panel to the right for thread context (post body + top comments) — a docked panel, **not** an overlay.
@@ -113,7 +113,7 @@ No drop shadows on cards, sidebar, or queue rows.
 - Filter chips (Pending / Approved / Scheduled / Posted / Error) as soft pills — sentence case.
 - List of draft cards: subreddit meta, title, truncated draft, status pill, relative time.
 - Dense but breathable; keyboard focus ring uses soft `accent` — never a harsh blue.
-- Empty state: mascot + AsciiAccent + one human line (“Nothing to review. Fetch threads or let the pipeline fill the queue.”).
+- Empty state: mascot + AsciiAccent + one human line (“Nothing to review yet. Add threads from Discover.”).
 
 ### Draft detail
 
@@ -124,8 +124,9 @@ No drop shadows on cards, sidebar, or queue rows.
 
 ### Discover
 
-- Intent search / saved queries as ChoiceCards or soft field + results list.
-- Results feed into “Draft” / “Skip” — same card language as the queue.
+- Intent filters (All / Question / Looking for tool / Unanswered / Complaint) as soft chips.
+- Fetch threads is a header action; while it runs, show the mascot **loading** status — never the empty-state copy.
+- Results: Add / Skip — same card language as the queue.
 - No alert-inbox aesthetics (we are not Syften).
 
 ### Schedule
@@ -138,15 +139,18 @@ No drop shadows on cards, sidebar, or queue rows.
 
 - Centred **sheet** (`rounded-sheet`, `shadow-pop` on scrim).
 - Own left nav: Accounts, Voice, Subreddits & discovery, Rate limits, LLM, About.
+- Voice / discovery copy is **purpose-aware** for the active workspace (product vs personal vs custom).
 - Forms use Field / Label / Input / Hint / FieldError — inputs rest in well, lift on focus.
+- Links: redo briefing (`/onboarding?briefing=1`), new workspace (`/onboarding?new=1`).
 
 ### Onboarding
 
 - Centred single-column on `bg-surface`.
-- Thin top bar: mark + five tiny progress dots.
-- Mascot, meta, heading, subtitle centred; content max **560px**.
-- Footer: ghost **Back** left, ink **Continue** right.
-- Steps: Reddit app → credentials → voice/persona → first subreddits → LLM → first fetch.
+- Thin top bar: mark + progress dots (account steps skip when Reddit + LLM are already connected).
+- Mascot, meta, heading, subtitle centred; content max **560px**. Interview chat max **640px**, stretches to fill.
+- Footer: ghost **Back** / **Cancel** left, ink **Continue** / **Finish** right. **No primary button on the interview step** — the agent advances when it has enough context.
+- Steps: Reddit app → Connect Reddit → LLM → purpose (product / personal / custom) → briefing chat → review workspace → first fetch.
+- Loading: `PageStatus` with searching mascot + matching copy. Refresh restores interview or review from `setup_step`.
 
 ---
 
@@ -176,9 +180,10 @@ Pills: 11px, optional dot/pulse for in-progress worker (“Discovering…”, �
 | `ChoiceCard` | selectable tile; selected check `bg-ink` |
 | `Pill` | status chips; tones map to palette |
 | `Notice` | soft callout, no border (e.g. rate-limit tip) |
-| `Mascot`, `MeuxeMark` | moods: neutral/happy/thinking/sleepy/surprised; mark = pale amber (`accent-100`) squircle + warm mascot |
+| `Mascot`, `MeuxeMark` | moods: neutral/happy/thinking/sleepy/surprised; `talking` / `searching`; mark = pale amber (`accent-100`) squircle + warm mascot |
+| `PageStatus` | loading vs empty; mascot + human line + dots while fetching |
 | `AsciiAccent` | stippled strip; empty states / panel headers only |
-| `Dots` | thinking indicator while drafting |
+| `Dots` | thinking indicator while drafting or page loading |
 | `Kbd`, `KeyCombo` | keycaps for review shortcuts |
 | `icons.tsx` | sole icon set |
 
@@ -210,7 +215,8 @@ No bounce-heavy “AI magic” animations on post success — a soft rise-in + s
 
 | Place | Copy |
 |-------|------|
-| Empty queue | “Nothing to review yet. Fetch threads or let discovery fill the queue.” |
+| Empty queue | “Nothing to review yet. Add threads from Discover.” |
+| Discover loading | “Fetching threads from your communities…” / “Looking through your communities…” |
 | Guardrail notice | “Nothing posts until you approve it.” |
 | After approve | “Ready when you are — post now or schedule.” |
 | Worker drafting | “Drafting in your voice…” |
@@ -234,11 +240,11 @@ No bounce-heavy “AI magic” animations on post success — a soft rise-in + s
 
 ## Implementation checklist
 
-- [ ] `web/src/index.css` — `@theme` tokens (palette, radii, shadows, fonts, motion)
-- [ ] `web/src/components/ui/` — primitives listed above
-- [ ] App shell: canvas + 64px rail + rounded-panel stage
-- [ ] Queue + draft detail + keyboard shortcuts
-- [ ] Mascot empty/loading states
+- [x] `web/src/index.css` — `@theme` tokens (palette, radii, shadows, fonts, motion)
+- [x] `web/src/components/ui/` — primitives listed above
+- [x] App shell: canvas + 64px rail + rounded-panel stage
+- [x] Queue + draft detail + keyboard shortcuts
+- [x] Mascot empty/loading states
 - [ ] Grep gate: no `slate|blue|indigo|violet|gray|emerald|red-` in `web/`
 
 **Stack fit:** Next.js App Router in `web/` consumes the FastAPI JSON API; all visual rules in this file apply to that app only — CLI remains unstyled text.
