@@ -18,8 +18,8 @@ import { ApiDownNotice } from "@/components/ui/notice";
 import { Pill } from "@/components/ui/pill";
 import { Surface } from "@/components/ui/surface";
 import { Field, Label, Input } from "@/components/ui/field";
-import { Mascot } from "@/components/ui/mascot";
 import { AsciiAccent } from "@/components/ui/ascii-accent";
+import { PageStatus } from "@/components/ui/page-status";
 import { BestTimeChips } from "@/components/schedule/best-time-chips";
 import { IconPlus } from "@/components/ui/icons";
 import { SubredditName } from "@/components/ui/subreddit-name";
@@ -117,23 +117,18 @@ export function ScheduleView() {
         {apiDown && <ApiDownNotice />}
 
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Mascot mood="thinking" />
-          </div>
+          <PageStatus kind="loading" message="Loading the schedule…" />
         ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <AsciiAccent className="mb-4" />
-            <Mascot mood="neutral" className="mb-4" />
-            <p className="max-w-sm text-[15px] text-ink-2">
-              Nothing scheduled yet. Schedule a reply from the queue, or compose
-              an original post.
-            </p>
+          <PageStatus
+            kind="empty"
+            message="Nothing scheduled yet. Schedule a reply from the queue, or compose an original post."
+          >
             <Link href="/compose" className="mt-4">
               <Button variant="secondary" leading={<IconPlus size={16} />}>
                 New post
               </Button>
             </Link>
-          </div>
+          </PageStatus>
         ) : (
           Array.from(grouped.entries()).map(([day, dayItems]) => (
             <section key={day}>

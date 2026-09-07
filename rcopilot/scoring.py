@@ -217,11 +217,11 @@ def classify_intent(post: dict[str, Any]) -> list[str]:
     return labels
 
 
-def intent_terms_from_product(product: str, *, limit: int = 12) -> list[str]:
-    """Turn a product blurb into short phrases/tokens to match against threads."""
+def intent_terms_from_briefing(briefing: str, *, limit: int = 12) -> list[str]:
+    """Turn a workspace briefing into short phrases/tokens to match against threads."""
     tokens = [
         token
-        for token in _TOKEN.findall(product.lower())
+        for token in _TOKEN.findall(briefing.lower())
         if len(token) >= 4 and token not in _STOPWORDS and token not in _GENERIC
     ]
     terms: list[str] = []
@@ -236,6 +236,11 @@ def intent_terms_from_product(product: str, *, limit: int = 12) -> list[str]:
             seen.add(token)
             terms.append(token)
     return terms[:limit]
+
+
+def intent_terms_from_product(product: str, *, limit: int = 12) -> list[str]:
+    """Alias for briefing terms (legacy name)."""
+    return intent_terms_from_briefing(product, limit=limit)
 
 
 def score_post(
@@ -275,17 +280,17 @@ def score_post(
             score += keyword_score
             reasons.append(f"keyword match (+{keyword_score:.2f})")
 
-    product_terms = intent_terms_from_product(product)
-    if product_terms:
-        product_score = 0.0
-        for term in product_terms:
+    briefing_terms = intent_terms_from_briefing(product)
+    if briefing_terms:
+        briefing_score = 0.0
+        for term in briefing_terms:
             if term in text:
                 matched.append(term)
-                product_score += 0.12
-        product_score = min(product_score, 0.36)
-        if product_score:
-            score += product_score
-            reasons.append(f"product match (+{product_score:.2f})")
+                briefing_score += 0.12
+        briefing_score = min(briefing_score, 0.36)
+        if briefing_score:
+            score += briefing_score
+            reasons.append(f"context match (+{briefing_score:.2f})")
 
     if "looking-for-tool" in labels:
         score += 0.2
@@ -314,7 +319,7 @@ def score_post(
             score += 0.05
             reasons.append("recent (<24h) (+0.05)")
 
-    if (keywords or product_terms) and not matched:
+    if (keywords or briefing_terms) and not matched:
         score = min(score, 0.2)
         reasons.append("weak intent fit (capped)")
 
@@ -326,14 +331,20 @@ def apply_scores(
     posts: list[dict[str, Any]],
     discovery: DiscoveryConfig,
     product: str = "",
+    *,
+    project_id: str | None = None,
 ) -> None:
     """Compute and persist scores for *posts*."""
+    from rcopilot.store import DEFAULT_PROJECT_ID
+
+    scoped_id = project_id or DEFAULT_PROJECT_ID
     for post in posts:
         score, reasons, matched, labels = score_post(
             post, discovery.keywords, product=product
         )
         store.update_post(
             post["id"],
+            project_id=scoped_id,
             relevance_score=score,
             score_reasons=json.dumps(reasons),
             keywords_matched=json.dumps(matched),

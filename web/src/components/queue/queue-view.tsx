@@ -8,8 +8,7 @@ import {
   type DraftStatus,
 } from "@/lib/api";
 import { ApiDownNotice } from "@/components/ui/notice";
-import { Mascot } from "@/components/ui/mascot";
-import { AsciiAccent } from "@/components/ui/ascii-accent";
+import { PageStatus } from "@/components/ui/page-status";
 import { DraftCard, FilterChips } from "@/components/queue/draft-card";
 
 export function QueueView() {
@@ -62,17 +61,12 @@ export function QueueView() {
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Mascot mood="thinking" />
-          </div>
+          <PageStatus kind="loading" message="Loading the queue…" />
         ) : drafts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center motion-safe:animate-rise-in">
-            <AsciiAccent className="mb-4" />
-            <Mascot mood="neutral" className="mb-4" />
-            <p className="max-w-sm text-[15px] text-ink-2 leading-relaxed">
-              Nothing to review yet. Add threads from Discover.
-            </p>
-          </div>
+          <PageStatus
+            kind="empty"
+            message="Nothing to review yet. Add threads from Discover."
+          />
         ) : (
           <div className="grid gap-3 motion-safe:animate-fade-in">
             {drafts.map((draft) => (

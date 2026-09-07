@@ -56,8 +56,12 @@
   --animate-rise-in: rise-in 350ms var(--ease-soft) both;
   --animate-pop-in: pop-in 300ms var(--ease-soft) both;
   --animate-breathe: breathe 4s ease-in-out infinite;
+  --animate-breathe-talk: breathe 1.15s ease-in-out infinite;
   --animate-blink: blink 4s ease-in-out infinite;
   --animate-dot: dot 1.4s ease-in-out infinite;
+  --animate-talk: talk 0.38s ease-in-out infinite;
+  --animate-caret: caret 1s steps(1) infinite;
+  --animate-glance: glance 2.2s ease-in-out infinite;
 }
 
 @keyframes fade-in {
@@ -109,6 +113,47 @@
   }
   95% {
     transform: scaleY(0.1);
+  }
+}
+
+@keyframes talk {
+  0%,
+  100% {
+    transform: scaleY(0.32);
+  }
+  28% {
+    transform: scaleY(1);
+  }
+  48% {
+    transform: scaleY(0.42);
+  }
+  72% {
+    transform: scaleY(0.88);
+  }
+}
+
+@keyframes caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes glance {
+  0%,
+  22%,
+  100% {
+    transform: translateX(0);
+  }
+  38% {
+    transform: translateX(-3.5px);
+  }
+  62% {
+    transform: translateX(3.5px);
   }
 }
 

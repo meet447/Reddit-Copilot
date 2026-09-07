@@ -112,7 +112,7 @@ def test_product_blurb_matches_intent() -> None:
     )
     assert score >= 0.2
     assert any(term in matched for term in ("engagement assistant", "copilot", "assistant", "engagement"))
-    assert any("product match" in reason for reason in reasons)
+    assert any("context match" in reason for reason in reasons)
     assert any("looking-for-tool" in reason for reason in reasons)
     assert "looking-for-tool" in labels
 
@@ -123,7 +123,7 @@ def test_unrelated_thread_does_not_get_product_match() -> None:
         ["looking for"],
         product="Reddit Copilot — a local-first Reddit engagement assistant.",
     )
-    assert "product match" not in " ".join(reasons)
+    assert "context match" not in " ".join(reasons)
     assert "copilot" not in matched
     assert score <= 0.2
     assert any("weak intent" in reason for reason in reasons)

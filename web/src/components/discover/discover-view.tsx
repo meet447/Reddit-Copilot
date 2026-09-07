@@ -11,8 +11,7 @@ import {
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ApiDownNotice, Notice } from "@/components/ui/notice";
-import { Mascot } from "@/components/ui/mascot";
-import { AsciiAccent } from "@/components/ui/ascii-accent";
+import { PageStatus } from "@/components/ui/page-status";
 import { Surface } from "@/components/ui/surface";
 import { SubredditName } from "@/components/ui/subreddit-name";
 import { IconPlus, IconSkip, IconRefresh } from "@/components/ui/icons";
@@ -218,19 +217,24 @@ export function DiscoverView() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <Mascot mood="thinking" />
-          </div>
+        {loading || fetching ? (
+          <PageStatus
+            kind="loading"
+            message={
+              fetching
+                ? "Fetching threads from your communities…"
+                : "Looking through your communities…"
+            }
+          />
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <AsciiAccent className="mb-4" />
-            <Mascot mood="sleepy" className="mb-4" />
-            <p className="max-w-sm text-[15px] text-ink-2">
-              No intent-matched threads right now. Fetch threads, or check
-              subreddits and what you make in Settings.
-            </p>
-          </div>
+          <PageStatus
+            kind="empty"
+            message={
+              query.trim() || labelFilter
+                ? "Nothing matches that filter."
+                : "No matching threads yet. Fetch a round, or check subreddits and what you make in Settings."
+            }
+          />
         ) : (
           <div className="grid gap-3">
             {filtered.map((post) => (

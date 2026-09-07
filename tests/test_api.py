@@ -111,7 +111,7 @@ def test_onboarding_progress_persists(client: TestClient) -> None:
 def test_onboarding_step_clamps(client: TestClient) -> None:
     response = client.put("/api/config", json={"onboarding_step": 99})
     assert response.status_code == 200
-    assert response.json()["onboarding_step"] == 4
+    assert response.json()["onboarding_step"] == 5
 
 
 def test_create_submission(client: TestClient) -> None:
@@ -185,7 +185,7 @@ def test_suggest_subreddits_api(
 ) -> None:
     monkeypatch.setattr(
         "rcopilot.llm.suggest_subreddits",
-        lambda llm, *, product, tone="", persona="", count=12: [
+        lambda llm, *, product, tone="", persona="", count=12, **kwargs: [
             "startups",
             "SaaS",
             "indiehackers",
