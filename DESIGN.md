@@ -118,16 +118,20 @@ No drop shadows on cards, sidebar, or queue rows.
 ### Draft detail
 
 - Left/main: editable draft textarea (well → surface-2 on focus, soft accent ring).
-- Actions: **Approve** (ink primary), **Reject** (danger-soft), **Regenerate** (ghost), **Post now** / **Schedule** (secondary or primary when approved).
+- Actions: **Approve** (ink primary), **Reject** (danger-soft), **pick an angle** (not regenerate-roulette), **Post now** / **Schedule** (secondary or primary when approved).
 - Right dock: thread title (link), selftext, top comments in a well.
 - Keybindings visible as `<Kbd>` / `<KeyCombo>` (e.g. `A` approve, `R` reject, `E` focus editor, `S` schedule).
 
 ### Discover
 
 - Intent filters (All / Question / Looking for tool / Unanswered / Complaint) as soft chips.
-- Fetch threads is a header action; while it runs, show the mascot **loading** status — never the empty-state copy.
+- Fetch threads is a header action. Keep the list while it runs. Show **skeleton cards** that drop away as real threads land; compact fetching notice. Never swap to empty-state copy mid-fetch.
 - Results: Add / Skip — same card language as the queue.
 - No alert-inbox aesthetics (we are not Syften).
+
+### Posts
+
+- Generate ideas is a header action. Same stream pattern as Discover: skeleton cards fill in as each self-post draft finishes. Existing drafts stay visible.
 
 ### Schedule
 
@@ -184,6 +188,7 @@ Pills: 11px, optional dot/pulse for in-progress worker (“Discovering…”, �
 | `PageStatus` | loading vs empty; mascot + human line + dots while fetching |
 | `AsciiAccent` | stippled strip; empty states / panel headers only |
 | `Dots` | thinking indicator while drafting or page loading |
+| `StreamCardSkeleton` | Discover / Posts card placeholders while SSE fills the list |
 | `Kbd`, `KeyCombo` | keycaps for review shortcuts |
 | `icons.tsx` | sole icon set |
 
@@ -196,7 +201,7 @@ Feature screens compose these only — no one-off colours or radii.
 Short and soft (≤350ms, `--ease-soft`):
 
 - `animate-fade-in`, `animate-rise-in`, `animate-pop-in` for panels and cards
-- Ambient: `animate-breathe`, `animate-blink` on mascot; `animate-dot` while drafting
+- Ambient: `animate-breathe`, `animate-blink` on mascot; `animate-dot` while drafting; `animate-bone` on stream skeletons
 - Respect `motion-safe:` / reduced motion
 
 No bounce-heavy “AI magic” animations on post success — a soft rise-in + sage pill is enough.
@@ -216,7 +221,8 @@ No bounce-heavy “AI magic” animations on post success — a soft rise-in + s
 | Place | Copy |
 |-------|------|
 | Empty queue | “Nothing to review yet. Add threads from Discover.” |
-| Discover loading | “Fetching threads from your communities…” / “Looking through your communities…” |
+| Discover loading | “Fetching threads from your communities…” / “Found N so far…” |
+| Posts generating | “Drafting posts for your communities…” / “Drafted N so far…” |
 | Guardrail notice | “Nothing posts until you approve it.” |
 | After approve | “Ready when you are — post now or schedule.” |
 | Worker drafting | “Drafting in your voice…” |

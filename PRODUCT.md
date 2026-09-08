@@ -1,6 +1,6 @@
 # Reddit Copilot — Product Plan
 
-**Status:** Phase 1 complete. Phase 2 next (draft variants, digest).  
+**Status:** Phase 2 in progress. Variants, live Discover/Posts streams, and vernacular matching shipped. Next: weekly digest.  
 **Product:** Open-source, local-first Reddit engagement assistant  
 **Later:** Optional hosted cloud service
 
@@ -47,7 +47,8 @@ For indie founders, developer advocates, and people who want to show up on Reddi
 **Autonomy we steal from Polsia (safe):**
 
 - Always-on **discover** (fetch + rank intent threads)
-- **On-demand draft** when you open a queued thread (streamed, editable)
+- **On-demand draft** when you open a queued thread (streamed, 2–3 pickable angles, editable)
+- **Live Discover + Posts** — threads and self-post ideas appear as they are ready, not after the whole round
 - **Weekly digest** of what was found / drafted / posted / how it performed
 
 **Autonomy we refuse:**
@@ -71,18 +72,28 @@ For indie founders, developer advocates, and people who want to show up on Reddi
 
 ## Core loop
 
+```mermaid
+flowchart LR
+  A[Brief workspace] --> B[Discover]
+  B --> C[Add / Skip]
+  C --> D[Draft / pick angle]
+  D --> E[Post or Schedule]
+  E --> F[Outcomes]
+  F --> G[Digest]
 ```
-Workspace briefing → Discover (auto) → Triage → Add / Skip → Draft / Edit → Post now | Schedule | Original post → Learn → Digest
+
+```
+Workspace briefing → Discover (live) → Triage → Add / Skip → Draft / pick angle → Post now | Schedule | Original post → Learn → Digest
 ```
 
 Users live in **Discover + the review queue**, not on reddit.com. Reddit sign-in and the LLM key are **account-level**. Each **workspace** (product, personal, or custom) has its own briefing, goals, subreddits, drafts, and queue.
 
 1. **Brief once** — pick a purpose, talk to the onboarding agent (links welcome). Copilot proposes a name, briefing, goals, communities, and keywords; you edit, then it fetches.
-2. **Discover (autonomous)** — pull threads that match *this workspace’s* briefing and intent signals (subs, keywords, unanswered questions).
+2. **Discover (autonomous)** — pull threads that match *this workspace’s* briefing and search language. Cards stream in as Reddit returns them.
 3. **Triage** — rank and hide noise in Discover.
-4. **Add / Skip (human)** — pick which threads enter the review queue; skip the rest.
-5. **Draft / Edit (human + LLM)** — generate a streamed reply in the workspace voice, edit it, regenerate if needed. Reject anything that doesn’t fit.
-6. **Post now, schedule, or compose** — the only hard gate before anything reaches Reddit; scheduler is a delay, not autopilot. Original self-posts use the same gate.
+4. **Add / Skip (human)** — pick which threads enter the review queue; skip the rest. The worker never drafts a thread you did not Add.
+5. **Draft / Edit (human + LLM)** — generate a streamed reply in the workspace voice, pick an angle, edit it. Reject anything that doesn’t fit.
+6. **Post now, schedule, or compose** — the only hard gate before anything reaches Reddit; scheduler is a delay, not autopilot. Original self-post ideas stream in the same way.
 7. **Learn + digest** — outcomes improve discovery/drafts; weekly summary pulls the user back.
 
 ---
@@ -96,10 +107,10 @@ Users live in **Discover + the review queue**, not on reddit.com. Reddit sign-in
 | **Purpose-based workspaces** | 2 | Product, personal, or custom — each with its own briefing, goals, subs, drafts, and queue |
 | **Agent briefing interview** | 2 | Short chat (paste links) → proposed workspace you can edit; agent advances when it has enough |
 | **Intent / keyword thread discovery** | 1 | Find threads that match this workspace (GummySearch gap) |
-| **Autonomous fetch + Discover triage** | 1 | Background fetch fills Discover — Polsia “it runs” feel without auto-post |
-| **Relevance scoring & intent labels** | 1 | Rank by fit; tag question / looking-for-tool / complaint / unanswered so Add/Skip is fast |
-| **Add → Draft → Post review UI** | 2 | Queue threads, stream draft/regenerate, edit, reject, post/schedule — review *is* the product |
-| **Original self-posts** | 2 | Write or generate a post, then post now or schedule — same human gate |
+| **Autonomous fetch + Discover triage** | 1 | Live SSE fetch fills Discover as threads land; skeleton cards until the round ends. Worker fetch + due schedules only — no auto-draft |
+| **Relevance scoring & intent labels** | 1 | Rank by briefing + saved search language (not exact slogans); tag question / looking-for-tool / complaint / unanswered |
+| **Add → Draft → Post review UI** | 2 | Queue threads, stream draft, pick 2–3 angles, edit, reject, post/schedule — review *is* the product |
+| **Original self-posts** | 2 | Write or generate a post (ideas stream in one at a time), then post now or schedule — same human gate |
 | **Safe posting guardrails** | 2 | Rate limits, cooldowns, no double-reply, allowlists |
 | **Schedule drafted comments & posts** | 4 | Queue a drafted reply or self-post for a future time; best-time hints per sub |
 | **Outcome tracking** | 2 | Poll posted comments for score, replies, removals |
@@ -110,9 +121,9 @@ Users live in **Discover + the review queue**, not on reddit.com. Reddit sign-in
 
 | Feature | Pillar | Why |
 |--------|--------|-----|
-| **Question radar** | 1 | Dedicated unanswered-first surface (labels already exist) |
-| **Draft variants** | 2 | 2–3 angles per thread; pick instead of rewrite |
-| **Weekly digest** | 2 | Found / drafted / posted / outcomes (Slack/email webhook) — not brand alerts |
+| **Draft variants** | 2 | **Shipped.** 2–3 named angles per queued thread; pick instead of rewrite. Worker does not draft Discover matches. |
+| **Question radar** | 1 | Unanswered chip + scoring boost exist. Remaining: unanswered-first sort / dedicated mode, and show score + reasons in Discover |
+| **Weekly digest** | 2 | **Next.** Found / drafted / posted / outcomes (in-app + optional Slack/email webhook) — not brand alerts |
 | **Local LLM (Ollama) as a first-class path** | 2 | Private drafting without a cloud key (base_url already works) |
 | **Multi-account routing** | 2 | Per-Reddit-account queues and schedules (workspaces already split *aims*) |
 
@@ -179,7 +190,7 @@ Same loop. Human still chooses every publish. Cloud hosts the worker, not the ju
 | Phase | Weeks | Focus | Exit criteria |
 |------|-------|-------|---------------|
 | **1 — Revival** | 1–4 | P0: workspaces + agent briefing + auto discover + Add/Skip + streamed draft review + original posts + schedule + docs | **Done.** Dogfood posted/scheduled from a product workspace; Show HN / r/SideProject |
-| **2 — Differentiate** | 5–10 | Question radar, variants, digest, first-class Ollama, multi-account | ≥40% post rate from queued threads; 50 WAU; 3 “switched from X” notes |
+| **2 — Differentiate** | 5–10 | **Shipped:** no worker auto-draft, pickable variants, live Discover/Posts streams + skeletons, vernacular matching. **Remaining:** digest, radar polish, first-class Ollama, multi-account | ≥40% post rate from queued threads; 50 WAU; 3 “switched from X” notes |
 | **3 — Compound** | 11–18 | Saved searches, follow-ups, memory, calendar, plugins, export | 100 WAU; community PRs; cloud waitlist ≥200 |
 | **4 — Cloud alpha** | 19–28 | Hosted discover/schedule runner + mobile review; paid from day one | 20 paying users; no ToS incidents; decide continue vs OSS-only |
 
@@ -195,13 +206,13 @@ Same loop. Human still chooses every publish. Cloud hosts the worker, not the ju
 |------|--------|-----|
 | Backend language | **Python 3.10+** | PRAW ecosystem; pipeline + worker stay here |
 | Package / CLI | `rcopilot` via `pyproject.toml` | `fetch` / `draft` / `run` / `post` / `serve` |
-| HTTP API | **FastAPI** | JSON + SSE for the Next app; replaces Flask UI routes |
+| HTTP API | **FastAPI** | JSON + SSE for Discover fetch, Posts generate, and draft streaming |
+| Frontend | **Next.js (App Router) + TypeScript** | Workspaces, Discover, review queue (variants), streaming draft, Posts generate, schedule — same UI path as cloud |
+| Autonomy worker | **CLI daemon** (`rcopilot run`) or cron | Discover + due schedules; drafting is on-demand in the UI after Add |
 | Reddit API | **PRAW** + web-app OAuth (refresh token) | Browser Connect Reddit; no password; local `.env` |
 | LLM | **OpenAI-compatible HTTP** (`openai` SDK) | OpenAI / Groq / OpenRouter / **Ollama** via `base_url`; streamed drafts |
 | Storage | **SQLite** | Zero ops; workspaces, posts, drafts, audit, schedule queue |
 | Config | `config.yaml` **+** `.env` | Non-secrets vs secrets; gitignore-safe |
-| Frontend | **Next.js (App Router) + TypeScript** | Workspaces, Discover, review queue, streaming draft, schedule — same UI path as cloud |
-| Autonomy worker | **CLI daemon** (`rcopilot run`) or cron | Discover + due schedules; drafting is on-demand in the UI |
 | Scheduler | **SQLite due jobs + worker tick** | Drafted items with `run_at`; no Celery yet |
 | Local DX | `rcopilot serve` starts API; `npm run dev` in `web/` for UI (or a small compose script) | Two processes is fine for OSS |
 
@@ -237,23 +248,16 @@ web/               # Next.js review app
 
 ### Architecture sketch
 
+```mermaid
+flowchart LR
+  Worker["CLI / worker\nrcopilot run"] --> Pipeline
+  UI["Next.js web/\nDiscover · queue · Posts"] -->|"JSON + SSE"| API["FastAPI /api/*"]
+  API --> Pipeline
+  Pipeline --> Store[(SQLite\nworkspaces · posts\ndrafts · jobs · audit)]
+  Pipeline --> Reddit["PRAW + LLM\nbriefing · score · draft"]
 ```
-┌──────────────┐     ┌──────────────┐     ┌─────────────┐
-│ CLI / worker │────▶│  pipeline    │────▶│  SQLite     │
-│ rcopilot run │     │  discover    │     │  workspaces │
-└──────────────┘     │  post/sched  │     │  posts      │
-                     │              │     │  drafts     │
-┌──────────────┐     └──────┬───────┘     │  jobs/audit │
-│ Next.js web/ │            │             └──────▲──────┘
-│ workspaces + │──── JSON ──┤                    │
-│ review UI    │──── SSE ───┤                    │
-└──────────────┘            │                    │
-                     ┌──────▼───────┐     ┌──────┴──────┐
-                     │  FastAPI     │     │  PRAW + LLM │
-                     │  /api/*      │     │  (briefing, │
-                     └──────────────┘     │   draft)    │
-                                          └─────────────┘
-```
+
+Worker does **fetch + due schedules**. Drafts start after Add (or Generate ideas on Posts). Discover fetch, Posts generate, and queue drafts stream over SSE.
 
 **Cloud later:** same API + Next app; swap SQLite→Postgres and local worker→hosted worker.
 
@@ -275,6 +279,6 @@ web/               # Next.js review app
 
 ## Final recommendation (locked)
 
-Phase 1 around Maya’s **product workspace** is done (including dogfood and Show HN / r/SideProject). Keep the human publish gate. Next: Phase 2 (draft variants, digest).
+Phase 1 around Maya’s **product workspace** is done (including dogfood and Show HN / r/SideProject). Keep the human publish gate. Phase 2 variants and live Discover/Posts streams are in. Next: weekly digest.
 
-**Product in one sentence:** An autonomous Reddit discovery pipeline, scoped to a workspace you brief once, with on-demand drafting and a human publish gate.
+**Product in one sentence:** An autonomous Reddit discovery pipeline, scoped to a workspace you brief once, with on-demand drafting (pick an angle) and a human publish gate.

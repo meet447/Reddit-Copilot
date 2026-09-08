@@ -41,9 +41,9 @@ Python owns Reddit, the LLM, SQLite, and the worker. Next.js owns the review des
 ## Features
 
 - **Workspaces** — brief a product, yourself, or a custom aim; switch without mixing queues
-- **Discover** — fetch and rank intent threads (questions, looking-for-tool, complaints, unanswered)
-- **Review queue** — Add threads, stream a draft, edit, then **Post** or **Schedule**
-- **Original posts** — write or generate a self-post, then post now or schedule
+- **Discover** — fetch streams threads as Reddit returns them; rank by briefing and search language (questions, looking-for-tool, complaints, unanswered)
+- **Review queue** — Add threads, pick a draft angle, edit, then **Post** or **Schedule**
+- **Original posts** — write or generate self-post ideas as they finish, then post now or schedule
 - **Outcomes** — poll posted comments for score, replies, and removals
 - **Local-first** — SQLite + `.env`; no cloud required
 - **OpenAI-compatible LLMs** — OpenAI, Groq, OpenRouter, or Ollama
@@ -97,7 +97,7 @@ rcopilot post      # publish ready drafts
 ## How it works
 
 ```
-Workspace briefing → Discover → Add / Skip → Draft / Edit → Post now | Schedule | Original post → Outcomes
+Workspace briefing → Discover (live) → Add / Skip → Draft / pick angle → Post now | Schedule | Original post → Outcomes
 ```
 
 ```
@@ -177,7 +177,7 @@ cd web && npm install && npm run lint
 
 ## Roadmap
 
-See [PRODUCT.md](PRODUCT.md). Phase 1 is done. Next: draft variants and a weekly digest.
+See [PRODUCT.md](PRODUCT.md). Phase 1 is done. Phase 2: variants and live Discover/Posts streams shipped. Next: weekly digest.
 
 ## License
 
