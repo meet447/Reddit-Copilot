@@ -50,6 +50,7 @@ from rcopilot.pipeline import (
     fetch_and_store,
     finish_draft_stream,
     generate_submission_ideas,
+    generate_draft_variants,
     iter_draft_deltas,
     poll_outcomes,
     post_approved,
@@ -58,6 +59,7 @@ from rcopilot.pipeline import (
     reject_draft,
     run_once,
     schedule_draft,
+    select_draft_variant,
     skip_post,
 )
 from rcopilot.store import DEFAULT_PROJECT_ID, PROJECT_PURPOSES, Store
@@ -106,6 +108,7 @@ DRAFT_API_FIELDS = (
     "kind",
     "target_subreddit",
     "submission_id",
+    "variants",
 )
 
 
@@ -116,6 +119,10 @@ class DraftEditBody(BaseModel):
 
 class ApproveBody(BaseModel):
     body: str | None = None
+
+
+class SelectVariantBody(BaseModel):
+    variant_id: str
 
 
 class ScheduleBody(BaseModel):
@@ -380,6 +387,31 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
+
+    @app.post("/api/drafts/{draft_id}/variants")
+    def generate_variants(draft_id: int) -> dict[str, Any]:
+        """Generate 2–3 reply angles for a queued comment. Nothing is selected until pick."""
+        config = get_config()
+        store = get_store(config)
+        try:
+            generate_draft_variants(config, store, draft_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        draft = store.get_draft(draft_id)
+        return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
+
+    @app.post("/api/drafts/{draft_id}/select-variant")
+    def select_variant(draft_id: int, body: SelectVariantBody) -> dict[str, Any]:
+        config = get_config()
+        store = get_store(config)
+        try:
+            select_draft_variant(store, draft_id, body.variant_id)
+        except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         draft = store.get_draft(draft_id)
         return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]

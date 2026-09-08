@@ -165,6 +165,121 @@ def generate_comment(
     return finalize_comment(content, product=product)
 
 
+VARIANT_PROMPT = """Write 2 or 3 distinct Reddit comment replies as a real person in this thread — not as an assistant, marketer, or chatbot.
+
+Post title: {title}
+Post body: {selftext}
+Top comments (for context; do not copy them):
+{comments}
+
+Your background (use only if it genuinely helps answer OP):
+Product/context: {product}
+Goals: {goals}
+Tone: {tone}
+Persona: {persona}
+Things to avoid: {avoid}
+
+Hard rules for every body:
+1. Open by answering OP's specific question or situation. Reference one concrete detail from the title or body.
+2. Keep it short: about 2–6 sentences. Prefer one useful tip or lived detail over a tidy list of tips.
+3. Sound like Reddit: first person, contractions, uneven sentence length. Fragments are fine.
+4. No markdown: no headings, no bullet/numbered lists, no bold labels.
+5. Never use em dashes (—) or en dashes (–). Use commas, periods, or parentheses.
+6. Never use bot closers or AI tells: "hope this helps", "great question", "it's worth noting", "as an AI", "let me know if you have any questions", "feel free to ask", "happy to help".
+7. Avoid buzzwords: delve, leverage, seamless, robust, tapestry, navigate the, unlock the, pivotal, testament.
+8. Do not structure the reply as "not X, but Y" antithesis or a balanced "X, Y, and Z" triad.
+9. Do not pitch the product. Mention it only if directly relevant to OP's ask, in one clause max, never as the point of the comment.
+10. Each body must take a different angle (for example: direct answer, lived experience, concise take).
+
+Return ONLY a JSON array of 2 or 3 objects. Each object must have "label" (2–4 words) and "body" (the comment). No markdown fence. Do not wrap bodies in quotes beyond JSON strings.
+"""
+
+
+def parse_comment_variants(raw: str, *, product: str = "") -> list[dict[str, str]]:
+    """Parse 2–3 labeled comment variants from an LLM JSON array."""
+    text = _strip_enclosing_quotes(raw)
+    fence = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, flags=re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    start = text.find("[")
+    end = text.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        body = finalize_comment(raw, product=product)
+        return [{"id": "v1", "label": "Reply", "body": body}]
+
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        body = finalize_comment(raw, product=product)
+        return [{"id": "v1", "label": "Reply", "body": body}]
+    if not isinstance(data, list):
+        raise ValueError("LLM variant payload was not a list")
+
+    variants: list[dict[str, str]] = []
+    for index, item in enumerate(data, start=1):
+        if len(variants) >= 3:
+            break
+        if isinstance(item, str):
+            label = f"Angle {index}"
+            body_raw = item
+        elif isinstance(item, dict):
+            label = str(item.get("label") or f"Angle {index}").strip() or f"Angle {index}"
+            body_raw = str(item.get("body") or "")
+        else:
+            continue
+        try:
+            body = finalize_comment(body_raw, product=product)
+        except RuntimeError:
+            continue
+        variants.append({"id": f"v{index}", "label": label[:40], "body": body})
+
+    if not variants:
+        raise ValueError("LLM returned no usable comment variants")
+    return variants
+
+
+def generate_comment_variants(
+    llm_config: LLMConfig,
+    title: str,
+    selftext: str,
+    comments: list[dict],
+    *,
+    product: str = "",
+    tone: str = "",
+    persona: str = "",
+    avoid: str = "",
+    goals: str = "",
+) -> list[dict[str, str]]:
+    """Generate 2–3 distinct comment angles for a thread."""
+    prompt = VARIANT_PROMPT.format_map(
+        SafeDict(
+            title=title or "",
+            selftext=selftext or "(no body)",
+            comments=_format_comments(comments),
+            product=product,
+            tone=tone,
+            persona=persona,
+            avoid=avoid,
+            goals=goals,
+        )
+    )
+
+    client = OpenAI(base_url=llm_config.base_url, api_key=llm_config.api_key)
+    logger.debug("Requesting LLM variants with model %s", llm_config.model)
+
+    response = client.chat.completions.create(
+        model=llm_config.model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.95,
+    )
+
+    content = response.choices[0].message.content if response.choices else None
+    if not content or not content.strip():
+        raise RuntimeError("LLM returned an empty response")
+
+    return parse_comment_variants(content, product=product)
+
+
 def parse_query_list(raw: str, *, limit: int = QUERY_LIMIT) -> list[str]:
     """Parse a JSON array of search queries from an LLM response."""
     text = _strip_enclosing_quotes(raw)

@@ -218,3 +218,21 @@ def test_comment_post_id_unique_still_enforced(tmp_path: Path) -> None:
 
     with pytest.raises(sqlite3.IntegrityError):
         store.create_draft("p1", "default", "duplicate")
+
+
+def test_draft_variants_roundtrip(tmp_path: Path) -> None:
+    store = Store(tmp_path / "variants.db")
+    store.ensure_schema()
+    _sample_post(store)
+    draft_id = store.create_draft("p1", "default", "")
+    store.update_draft(
+        draft_id,
+        variants=[
+            {"id": "v1", "label": "Direct", "body": "I would start with pytest."},
+            {"id": "v2", "label": "Lived", "body": "I hit this last year on Windows."},
+        ],
+    )
+    draft = store.get_draft(draft_id)
+    assert draft is not None
+    assert draft["body"] == ""
+    assert [item["label"] for item in draft["variants"]] == ["Direct", "Lived"]

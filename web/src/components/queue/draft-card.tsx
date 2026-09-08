@@ -38,7 +38,9 @@ export function DraftCard({ draft }: { draft: Draft }) {
             ? truncate(draft.body, 180)
             : draft.kind === "submission"
               ? "No body yet — open to edit."
-              : "No reply yet — open and click Draft."}
+              : (draft.variants?.length ?? 0) > 0
+                ? "Angles ready — open and pick one."
+                : "No reply yet — open and click Draft."}
         </p>
         {draft.status === "posted" && draft.outcomes_polled_at && (
           <p className="mt-2 text-[12px] text-ink-3">

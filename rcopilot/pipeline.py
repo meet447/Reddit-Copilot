@@ -15,6 +15,7 @@ from rcopilot.llm import (
     fallback_search_queries,
     finalize_comment,
     generate_comment,
+    generate_comment_variants,
     generate_search_queries,
     generate_submission,
     iter_comment_deltas,
@@ -195,49 +196,38 @@ def _generate_draft_body(config: AppConfig, post: dict[str, Any]) -> str:
     )
 
 
-def _eligible_posts_for_drafting(store: Store, config: AppConfig) -> list[dict[str, Any]]:
-    posts = store.list_posts(
-        project_id=_project_id(config),
-        undrafted=True,
-        skipped=False,
-        min_score=config.discovery.min_score,
-    )
-    return posts
-
-
 def draft_pending(config: AppConfig, store: Store, account_name: str | None = None) -> int:
-    """Create LLM drafts for eligible posts."""
+    """Generate variant angles for queued comment drafts that still have an empty body.
+
+    Does not pull new threads from Discover. Use queue_post (Add) first.
+    """
     store.ensure_schema()
     if not config.llm.api_key:
         raise ValueError("Missing LLM_API_KEY in .env (or llm.api_key in config)")
-    account = _resolve_account(config, account_name)
-    posts = _eligible_posts_for_drafting(store, config)
+    _resolve_account(config, account_name)
+    queued = [
+        draft
+        for draft in store.list_drafts(status="pending", project_id=_project_id(config))
+        if (draft.get("kind") or "comment") == "comment"
+        and not (draft.get("body") or "").strip()
+        and not draft.get("variants")
+    ]
     created = 0
-
-    for post in posts:
+    for draft in queued:
         try:
-            body = _generate_draft_body(config, post)
-            draft_id = store.create_draft(
-                post["id"], account.name, body, status="pending", project_id=_project_id(config)
-            )
-            store.add_audit("drafted", draft_id=draft_id, post_id=post["id"], project_id=_project_id(config))
+            generate_draft_variants(config, store, int(draft["id"]))
             created += 1
-            logger.info("Drafted comment for post %s", post["id"])
         except Exception as exc:
-            logger.exception("LLM draft failed for post %s: %s", post["id"], exc)
-            draft_id = store.create_draft(
-                post["id"], account.name, "", status="error", project_id=_project_id(config)
-            )
-            store.update_draft(draft_id, error=str(exc))
+            logger.exception("LLM draft failed for draft %s: %s", draft["id"], exc)
+            store.update_draft(int(draft["id"]), status="error", error=str(exc))
             store.add_audit(
                 "draft_error",
-                draft_id=draft_id,
-                post_id=post["id"],
+                draft_id=int(draft["id"]),
+                post_id=draft.get("post_id"),
                 project_id=_project_id(config),
                 detail={"error": str(exc)},
             )
-
-    logger.info("Created %d draft(s)", created)
+    logger.info("Generated variants for %d queued draft(s)", created)
     return created
 
 
@@ -336,6 +326,62 @@ def finish_draft_stream(
     return body
 
 
+def generate_draft_variants(config: AppConfig, store: Store, draft_id: int) -> list[dict[str, str]]:
+    """Generate 2–3 reply angles for a queued comment. Body stays empty until the user picks one."""
+    draft = store.get_draft(draft_id)
+    if draft is None:
+        raise ValueError(f"Draft not found: {draft_id}")
+    if (draft.get("kind") or "comment") != "comment":
+        raise ValueError("Variants are only for comment replies")
+    if draft["status"] in {"posted", "rejected"}:
+        raise ValueError(f"Draft {draft_id} cannot be generated (status={draft['status']})")
+    if not config.llm.api_key:
+        raise ValueError("Missing LLM_API_KEY in .env (or llm.api_key in config)")
+
+    had_body = bool((draft.get("body") or "").strip() or draft.get("variants"))
+    variants = generate_comment_variants(
+        config.llm,
+        draft["title"],
+        draft["selftext"],
+        draft.get("top_comments") or [],
+        **_voice_kwargs(config),
+    )
+    store.update_draft(
+        draft_id,
+        variants=variants,
+        body="",
+        status="pending",
+        error=None,
+    )
+    store.add_audit(
+        "regenerated" if had_body else "drafted",
+        draft_id=draft_id,
+        post_id=draft.get("post_id"),
+        detail={"variants": [item["id"] for item in variants]},
+    )
+    return variants
+
+
+def select_draft_variant(store: Store, draft_id: int, variant_id: str) -> None:
+    """Copy a generated angle into the editable draft body."""
+    draft = store.get_draft(draft_id)
+    if draft is None:
+        raise ValueError(f"Draft not found: {draft_id}")
+    if draft["status"] in {"posted", "rejected"}:
+        raise ValueError(f"Draft {draft_id} cannot be edited (status={draft['status']})")
+    wanted = (variant_id or "").strip()
+    match = next((item for item in (draft.get("variants") or []) if item.get("id") == wanted), None)
+    if match is None:
+        raise ValueError(f"Unknown variant: {variant_id}")
+    store.update_draft(draft_id, body=match["body"], status="pending", error=None)
+    store.add_audit(
+        "variant_selected",
+        draft_id=draft_id,
+        post_id=draft.get("post_id"),
+        detail={"variant_id": wanted, "label": match.get("label")},
+    )
+
+
 def skip_post(store: Store, post_id: str, *, project_id: str = DEFAULT_PROJECT_ID) -> None:
     """Mark a post as skipped."""
     post = store.get_post(post_id, project_id=project_id)
@@ -346,16 +392,8 @@ def skip_post(store: Store, post_id: str, *, project_id: str = DEFAULT_PROJECT_I
 
 
 def regenerate_draft(config: AppConfig, store: Store, draft_id: int) -> None:
-    """Regenerate an LLM draft body."""
-    draft = store.get_draft(draft_id)
-    if draft is None:
-        raise ValueError(f"Draft not found: {draft_id}")
-    if not config.llm.api_key:
-        raise ValueError("Missing LLM_API_KEY in .env (or llm.api_key in config)")
-
-    new_body = _generate_draft_body(config, draft)
-    store.update_draft(draft_id, body=new_body, status="pending", error=None)
-    store.add_audit("regenerated", draft_id=draft_id, post_id=draft["post_id"])
+    """Regenerate reply angles for a queued comment draft."""
+    generate_draft_variants(config, store, draft_id)
 
 
 def approve_draft(store: Store, draft_id: int, body: str | None = None) -> None:
@@ -780,7 +818,11 @@ def run_once(
     *,
     config_path: str | Path | None = None,
 ) -> dict[str, int]:
-    """Run one worker cycle: fetch, draft eligible posts, post due schedules, poll outcomes."""
+    """Run one worker cycle: fetch, post due schedules, poll outcomes.
+
+    Does not draft replies. Drafting is on-demand after Add, in the UI or via
+    `rcopilot draft` for already-queued empty drafts.
+    """
     from rcopilot.projects import apply_project_to_config, seed_projects_from_config
 
     store.ensure_schema()
@@ -788,7 +830,6 @@ def run_once(
     original_id = _project_id(config)
     projects = [item for item in store.list_projects() if item.get("subreddits")]
     fetched = 0
-    drafted = 0
     if projects:
         for project in projects:
             apply_project_to_config(config, project)
@@ -796,10 +837,6 @@ def run_once(
                 fetched += fetch_and_store(config, store, config_path=config_path)
             except ValueError as exc:
                 logger.warning("Fetch skipped for project %s: %s", project.get("id"), exc)
-            try:
-                drafted += draft_pending(config, store)
-            except ValueError as exc:
-                logger.warning("Draft skipped for project %s: %s", project.get("id"), exc)
         original = store.get_project(original_id)
         if original:
             apply_project_to_config(config, original)
@@ -807,13 +844,12 @@ def run_once(
                 save_config(config_path, config)
     else:
         fetched = fetch_and_store(config, store, config_path=config_path)
-        drafted = draft_pending(config, store)
     scheduled_results = post_due_scheduled(config, store)
     posted = sum(1 for item in scheduled_results if item.get("ok"))
     outcomes = poll_outcomes(config, store)
     return {
         "fetched": fetched,
-        "drafted": drafted,
+        "drafted": 0,
         "posted": posted,
         "outcomes": outcomes,
     }

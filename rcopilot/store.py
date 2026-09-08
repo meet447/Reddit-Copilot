@@ -21,7 +21,7 @@ _DRAFT_SELECT = """
             SELECT d.id, d.post_id, d.account_name, d.body, d.status, d.error, d.permalink,
                    d.created_at, d.updated_at, d.run_at, d.comment_id,
                    d.outcome_score, d.outcome_replies, d.outcome_removed, d.outcomes_polled_at,
-                   d.kind, d.submission_id, d.target_subreddit, d.project_id,
+                   d.kind, d.submission_id, d.target_subreddit, d.project_id, d.variants,
                    COALESCE(p.subreddit, d.target_subreddit) AS subreddit,
                    COALESCE(p.title, d.title) AS title,
                    COALESCE(p.selftext, '') AS selftext,
@@ -135,7 +135,8 @@ class Store:
                 kind TEXT NOT NULL DEFAULT 'comment',
                 title TEXT,
                 target_subreddit TEXT,
-                submission_id TEXT
+                submission_id TEXT,
+                variants TEXT NOT NULL DEFAULT '[]'
             );
 
             CREATE TABLE IF NOT EXISTS audit_events (
@@ -172,6 +173,7 @@ class Store:
         self._add_column_if_missing(conn, "drafts", "target_subreddit", "TEXT")
         self._add_column_if_missing(conn, "drafts", "submission_id", "TEXT")
         self._add_column_if_missing(conn, "drafts", "project_id", "TEXT NOT NULL DEFAULT 'default'")
+        self._add_column_if_missing(conn, "drafts", "variants", "TEXT NOT NULL DEFAULT '[]'")
         self._add_column_if_missing(conn, "audit_events", "project_id", "TEXT")
         self._add_column_if_missing(conn, "projects", "setup_step", "INTEGER NOT NULL DEFAULT 0")
         self._migrate_drafts_nullable_post_id(conn)
@@ -571,6 +573,7 @@ class Store:
             "title",
             "target_subreddit",
             "submission_id",
+            "variants",
         }
         unknown = set(fields) - allowed
         if unknown:
@@ -582,6 +585,8 @@ class Store:
             raise ValueError(f"Invalid draft kind: {fields['kind']}")
 
         fields = dict(fields)
+        if "variants" in fields and not isinstance(fields["variants"], str):
+            fields["variants"] = json.dumps(fields["variants"])
         fields["updated_at"] = _utc_now_iso()
 
         columns = ", ".join(f"{key} = ?" for key in fields)
@@ -1055,4 +1060,19 @@ class Store:
         data["outcome_removed"] = bool(data.get("outcome_removed", 0))
         data["kind"] = data.get("kind") or "comment"
         data["relevance_score"] = data.get("relevance_score") or 0
+        data["variants"] = Store._parse_variants(data.get("variants"))
         return data
+
+    @staticmethod
+    def _parse_variants(value: Any) -> list[dict[str, str]]:
+        variants: list[dict[str, str]] = []
+        for item in Store._parse_json_list(value):
+            if not isinstance(item, dict):
+                continue
+            variant_id = str(item.get("id") or "").strip()
+            body = str(item.get("body") or "").strip()
+            label = str(item.get("label") or "").strip() or "Reply"
+            if not variant_id or not body:
+                continue
+            variants.append({"id": variant_id, "label": label, "body": body})
+        return variants

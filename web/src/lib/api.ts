@@ -13,6 +13,12 @@ export interface TopComment {
 
 export type DraftKind = "comment" | "submission";
 
+export interface DraftVariant {
+  id: string;
+  label: string;
+  body: string;
+}
+
 export interface Draft {
   id: number;
   post_id: string | null;
@@ -42,6 +48,7 @@ export interface Draft {
   target_subreddit?: string | null;
   submission_id?: string | null;
   lint_warnings?: { code: string; message: string }[];
+  variants?: DraftVariant[];
 }
 
 export interface BestTimeSuggestion {
@@ -289,6 +296,20 @@ export function rejectDraft(id: number): Promise<Draft> {
 
 export function regenerateDraft(id: number): Promise<Draft> {
   return request<Draft>(`/api/drafts/${id}/regenerate`, { method: "POST" });
+}
+
+export function generateDraftVariants(id: number): Promise<Draft> {
+  return request<Draft>(`/api/drafts/${id}/variants`, { method: "POST" });
+}
+
+export function selectDraftVariant(
+  id: number,
+  variantId: string,
+): Promise<Draft> {
+  return request<Draft>(`/api/drafts/${id}/select-variant`, {
+    method: "POST",
+    body: JSON.stringify({ variant_id: variantId }),
+  });
 }
 
 export async function postDraft(id: number): Promise<Draft> {

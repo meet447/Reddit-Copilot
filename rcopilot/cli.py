@@ -209,7 +209,10 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_parser = subparsers.add_parser("fetch", help="Fetch posts and store them")
     fetch_parser.set_defaults(func=cmd_fetch)
 
-    draft_parser = subparsers.add_parser("draft", help="Generate drafts for pending posts")
+    draft_parser = subparsers.add_parser(
+        "draft",
+        help="Generate reply angles for queued empty drafts (does not Add from Discover)",
+    )
     draft_parser.add_argument(
         "--account",
         metavar="NAME",
@@ -246,7 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_parser.set_defaults(func=cmd_serve)
 
-    run_parser = subparsers.add_parser("run", help="Run worker loop (fetch, draft, post due schedules)")
+    run_parser = subparsers.add_parser("run", help="Run worker loop (fetch, post due schedules)")
     run_parser.set_defaults(func=cmd_run)
 
     review_parser = subparsers.add_parser("review", help="(deprecated) Use rcopilot serve")

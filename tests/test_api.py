@@ -202,3 +202,18 @@ def test_suggest_subreddits_api(
 def test_suggest_subreddits_requires_product(client: TestClient) -> None:
     response = client.post("/api/subreddits/suggest", json={"product": ""})
     assert response.status_code == 400
+
+
+def test_select_variant_unknown_draft(client: TestClient) -> None:
+    response = client.post(
+        "/api/drafts/1/select-variant",
+        json={"variant_id": "v1"},
+    )
+    assert response.status_code == 400
+    assert "not found" in response.json()["error"].lower()
+
+
+def test_generate_variants_unknown_draft(client: TestClient) -> None:
+    response = client.post("/api/drafts/1/variants")
+    assert response.status_code == 400
+    assert "not found" in response.json()["error"].lower()

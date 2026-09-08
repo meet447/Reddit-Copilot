@@ -11,12 +11,14 @@ import {
   postDraft,
   scheduleDraft,
   unscheduleDraft,
-  streamDraftGenerate,
+  generateDraftVariants,
+  selectDraftVariant,
   type Draft,
 } from "@/lib/api";
 import {
   fromDatetimeLocalValue,
   toDatetimeLocalValue,
+  truncate,
 } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
@@ -29,6 +31,7 @@ import { Textarea, Field, Label, Input } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { Pill } from "@/components/ui/pill";
 import { Surface } from "@/components/ui/surface";
+import { ChoiceCard } from "@/components/ui/choice-card";
 import { Kbd, KeyCombo } from "@/components/ui/kbd";
 import { Dots } from "@/components/ui/dots";
 import { PageStatus } from "@/components/ui/page-status";
@@ -46,7 +49,7 @@ export function DraftDetailView({ id }: { id: number }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const [streaming, setStreaming] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleValue, setScheduleValue] = useState("");
   const [siblingIds, setSiblingIds] = useState<number[]>([]);
@@ -109,7 +112,7 @@ export function DraftDetailView({ id }: { id: number }) {
     setError(null);
     setMessage(null);
     try {
-      if (name !== "generate") await saveBody();
+      if (name !== "generate" && name !== "variant") await saveBody();
       const updated = await fn();
       setDraft(updated);
       setBody(updated.body);
@@ -127,23 +130,24 @@ export function DraftDetailView({ id }: { id: number }) {
   }
 
   async function handleGenerate() {
-    if (!draft || streaming || draft.status === "posted" || isSubmission) return;
-    const wasRegen = Boolean(draft.body.trim() || body.trim());
-    setStreaming(true);
+    if (!draft || generating || draft.status === "posted" || isSubmission) return;
+    const wasRegen = Boolean(
+      (draft.variants && draft.variants.length > 0) ||
+        draft.body.trim() ||
+        body.trim(),
+    );
+    setGenerating(true);
     setBusy("generate");
     setError(null);
     setMessage(null);
-    setBody("");
     try {
-      const updated = await streamDraftGenerate(draft.id, (delta) => {
-        setBody((prev) => prev + delta);
-      });
+      const updated = await generateDraftVariants(draft.id);
       setDraft(updated);
       setBody(updated.body);
       setMessage(
         wasRegen
-          ? "Regenerated. Edit, then post or schedule."
-          : "Draft ready. Edit, then post or schedule.",
+          ? "New angles. Pick one, then edit."
+          : "Pick an angle, then edit and post.",
       );
     } catch (e) {
       setError(
@@ -153,9 +157,18 @@ export function DraftDetailView({ id }: { id: number }) {
       );
       await load();
     } finally {
-      setStreaming(false);
+      setGenerating(false);
       setBusy(null);
     }
+  }
+
+  async function handleSelectVariant(variantId: string) {
+    if (!draft || generating || draft.status === "posted") return;
+    await runAction(
+      "variant",
+      () => selectDraftVariant(draft.id, variantId),
+      "This angle is in the editor. Edit, then post or schedule.",
+    );
   }
 
   useEffect(() => {
@@ -190,6 +203,17 @@ export function DraftDetailView({ id }: { id: number }) {
           e.preventDefault();
           if (!isSubmission) void handleGenerate();
           break;
+        case "1":
+        case "2":
+        case "3": {
+          const variants = draft?.variants ?? [];
+          const picked = variants[Number(e.key) - 1];
+          if (picked) {
+            e.preventDefault();
+            void handleSelectVariant(picked.id);
+          }
+          break;
+        }
         case "j":
           if (nextId) router.push(`/queue/${nextId}`);
           break;
@@ -261,6 +285,11 @@ export function DraftDetailView({ id }: { id: number }) {
               <Kbd>D</Kbd> draft
             </span>
           )}
+          {!isSubmission && (draft.variants?.length ?? 0) > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <KeyCombo keys={["1", "2", "3"]} /> pick
+            </span>
+          )}
           <span className="inline-flex items-center gap-1">
             <Kbd>R</Kbd> reject
           </span>
@@ -289,14 +318,15 @@ export function DraftDetailView({ id }: { id: number }) {
                   "That didn't go through. Check the note and try again."}
               </Notice>
             )}
-            {streaming && (
+            {generating && (
               <Notice tone="accent">
                 <span className="inline-flex items-center gap-2">
-                  Writing reply… <Dots />
+                  Drafting a few angles… <Dots />
                 </span>
               </Notice>
             )}
-            {!streaming &&
+            {!generating &&
+              Boolean(body.trim()) &&
               body === draft.body &&
               (draft.lint_warnings?.length ?? 0) > 0 && (
                 <Notice tone="honey">
@@ -305,6 +335,25 @@ export function DraftDetailView({ id }: { id: number }) {
                   before posting.
                 </Notice>
               )}
+
+            {!isSubmission && (draft.variants?.length ?? 0) > 0 && (
+              <div className="shrink-0 space-y-2">
+                <p className="text-[12px] font-medium text-ink-3">
+                  Pick an angle
+                </p>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {draft.variants!.map((variant) => (
+                    <ChoiceCard
+                      key={variant.id}
+                      selected={body === variant.body}
+                      title={variant.label}
+                      description={truncate(variant.body, 140)}
+                      onSelect={() => void handleSelectVariant(variant.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
 
             <Field className="flex min-h-0 flex-1 flex-col">
               <Label htmlFor="draft-body" className="shrink-0">
@@ -316,7 +365,7 @@ export function DraftDetailView({ id }: { id: number }) {
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="Post title"
-                  disabled={streaming}
+                  disabled={generating}
                 />
               )}
               <div className="relative min-h-0 flex-1">
@@ -325,13 +374,15 @@ export function DraftDetailView({ id }: { id: number }) {
                   id="draft-body"
                   value={body}
                   onChange={(e) => setBody(e.target.value)}
-                  readOnly={streaming}
+                  readOnly={generating}
                   placeholder={
-                    streaming
+                    generating
                       ? ""
                       : isSubmission
                         ? "Write the post body."
-                        : "Click Draft to write a reply, or type your own."
+                        : (draft.variants?.length ?? 0) > 0
+                          ? "Pick an angle above, or type your own."
+                          : "Click Draft for a few angles, or type your own."
                   }
                   className="absolute inset-0 h-full min-h-0 resize-none overflow-y-auto text-[15px]"
                 />
@@ -344,16 +395,18 @@ export function DraftDetailView({ id }: { id: number }) {
               <Button
                 leading={<IconDraft size={16} />}
                 loading={busy === "generate"}
-                disabled={streaming || draft.status === "posted"}
+                disabled={generating || draft.status === "posted"}
                 onClick={() => void handleGenerate()}
               >
-                {hasBody || draft.body ? "Regenerate" : "Draft"}
+                {(draft.variants?.length ?? 0) > 0 || hasBody || draft.body
+                  ? "More angles"
+                  : "Draft"}
               </Button>
             )}
             <Button
               variant="danger-soft"
               loading={busy === "reject"}
-              disabled={streaming}
+              disabled={generating}
               onClick={() =>
                 runAction("reject", () => rejectDraft(draft.id)).then(() =>
                   router.push("/queue"),
@@ -367,7 +420,7 @@ export function DraftDetailView({ id }: { id: number }) {
               <Button
                 variant="ghost"
                 loading={busy === "unschedule"}
-                disabled={streaming}
+                disabled={generating}
                 onClick={() =>
                   runAction("unschedule", () => unscheduleDraft(draft.id))
                 }
@@ -377,7 +430,7 @@ export function DraftDetailView({ id }: { id: number }) {
             ) : (
               <Button
                 variant="secondary"
-                disabled={!canPost || streaming}
+                disabled={!canPost || generating}
                 onClick={() => setScheduleOpen(true)}
               >
                 Schedule
@@ -386,7 +439,7 @@ export function DraftDetailView({ id }: { id: number }) {
             <Button
               variant="secondary"
               loading={busy === "post"}
-              disabled={!canPost || streaming}
+              disabled={!canPost || generating}
               onClick={() =>
                 runAction(
                   "post",

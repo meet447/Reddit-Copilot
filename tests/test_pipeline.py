@@ -20,10 +20,14 @@ from rcopilot.pipeline import (
     approve_draft,
     cancel_schedule,
     create_submission_draft,
+    draft_pending,
+    generate_draft_variants,
     poll_outcomes,
     post_due_scheduled,
     reject_draft,
+    run_once,
     schedule_draft,
+    select_draft_variant,
 )
 from rcopilot.store import Store
 
@@ -199,3 +203,87 @@ def test_schedule_and_post_due_submission(
     assert draft["status"] == "posted"
     assert draft["submission_id"] == "abc123"
     assert draft["permalink"].endswith("/launch_notes/")
+
+
+def test_run_once_does_not_auto_draft(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = Store(tmp_path / "run_once.db")
+    store.ensure_schema()
+    drafted: list[int] = []
+    monkeypatch.setattr("rcopilot.pipeline.fetch_and_store", lambda *args, **kwargs: 2)
+    monkeypatch.setattr(
+        "rcopilot.pipeline.draft_pending",
+        lambda *args, **kwargs: drafted.append(1) or 3,
+    )
+    monkeypatch.setattr("rcopilot.pipeline.post_due_scheduled", lambda *args, **kwargs: [])
+    monkeypatch.setattr("rcopilot.pipeline.poll_outcomes", lambda *args, **kwargs: 0)
+
+    result = run_once(_config(), store)
+    assert drafted == []
+    assert result["drafted"] == 0
+    assert result["fetched"] == 2
+
+
+def test_draft_pending_only_fills_queued_empty_drafts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = Store(tmp_path / "pending.db")
+    store.ensure_schema()
+    store.upsert_post(
+        id="discover-only",
+        subreddit="python",
+        title="Anyone using pytest?",
+        selftext="Need a fixture tip.",
+        url="https://example.com",
+        permalink="https://reddit.com/r/python/comments/discover-only",
+        created_utc=1.0,
+        top_comments=[],
+    )
+    queued_id = _seed_draft(store, body="")
+    config = _config()
+    config.llm.api_key = "test-key"
+    monkeypatch.setattr(
+        "rcopilot.pipeline.generate_comment_variants",
+        lambda *args, **kwargs: [
+            {"id": "v1", "label": "Direct", "body": "I would start with a tiny fixture."},
+            {"id": "v2", "label": "Lived", "body": "I hit this last year on Windows."},
+        ],
+    )
+
+    created = draft_pending(config, store)
+    assert created == 1
+    assert store.get_post("discover-only") is not None
+    assert store.list_posts_without_draft()
+    queued = store.get_draft(queued_id)
+    assert queued is not None
+    assert queued["body"] == ""
+    assert len(queued["variants"]) == 2
+
+
+def test_generate_and_select_variants(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = Store(tmp_path / "variants.db")
+    store.ensure_schema()
+    draft_id = _seed_draft(store, body="")
+    config = _config()
+    config.llm.api_key = "test-key"
+    monkeypatch.setattr(
+        "rcopilot.pipeline.generate_comment_variants",
+        lambda *args, **kwargs: [
+            {"id": "v1", "label": "Direct", "body": "I would start with pytest."},
+            {"id": "v2", "label": "Lived", "body": "I hit this last year on Windows."},
+        ],
+    )
+
+    variants = generate_draft_variants(config, store, draft_id)
+    draft = store.get_draft(draft_id)
+    assert draft is not None
+    assert draft["body"] == ""
+    assert [item["id"] for item in variants] == ["v1", "v2"]
+    assert draft["variants"][1]["label"] == "Lived"
+
+    select_draft_variant(store, draft_id, "v2")
+    draft = store.get_draft(draft_id)
+    assert draft is not None
+    assert draft["body"] == "I hit this last year on Windows."
+
+    with pytest.raises(ValueError, match="Unknown variant"):
+        select_draft_variant(store, draft_id, "nope")

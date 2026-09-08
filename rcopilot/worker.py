@@ -23,7 +23,7 @@ def run_forever(
     stop_event: threading.Event | None = None,
     config_path: str | None = None,
 ) -> None:
-    """Run fetch+draft+schedule loop until *stop_event* is set."""
+    """Autonomous worker loop for Reddit Copilot (discover + schedules, no auto-draft)."""
     store.ensure_schema()
     interval = config.worker.interval_seconds
 
@@ -35,9 +35,8 @@ def run_forever(
         try:
             counts = run_once(config, store, config_path=config_path)
             logger.info(
-                "Worker cycle complete: fetched=%d drafted=%d posted=%d",
+                "Worker cycle complete: fetched=%d posted=%d",
                 counts["fetched"],
-                counts["drafted"],
                 counts["posted"],
             )
         except Exception:
