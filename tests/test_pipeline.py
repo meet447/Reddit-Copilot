@@ -17,11 +17,14 @@ from rcopilot.config import (
     WorkerConfig,
 )
 from rcopilot.pipeline import (
+    _queries_fingerprint,
     approve_draft,
     cancel_schedule,
     create_submission_draft,
     draft_pending,
+    fetch_and_store,
     generate_draft_variants,
+    iter_fetch_and_store,
     poll_outcomes,
     post_due_scheduled,
     reject_draft,
@@ -287,3 +290,94 @@ def test_generate_and_select_variants(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
     with pytest.raises(ValueError, match="Unknown variant"):
         select_draft_variant(store, draft_id, "nope")
+
+
+def _discover_post(post_id: str, title: str) -> dict:
+    return {
+        "id": post_id,
+        "subreddit": "python",
+        "title": title,
+        "selftext": "Looking for a fixture tip.",
+        "url": f"https://example.com/{post_id}",
+        "permalink": f"https://reddit.com/r/python/comments/{post_id}",
+        "created_utc": 1.0,
+        "top_comments": [],
+        "num_comments": 0,
+    }
+
+
+def test_iter_fetch_and_store_yields_each_thread(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = Store(tmp_path / "fetch.db")
+    store.ensure_schema()
+    config = _config()
+    listing = _discover_post("list1", "How do I learn Python?")
+    search = _discover_post("search1", "Looking for a pytest fixture pattern?")
+    monkeypatch.setattr("rcopilot.pipeline.reddit_client.get_reddit", lambda account: object())
+    monkeypatch.setattr(
+        "rcopilot.pipeline.reddit_client.iter_listing_posts",
+        lambda *args, **kwargs: iter([listing]),
+    )
+    monkeypatch.setattr(
+        "rcopilot.pipeline.reddit_client.iter_search_posts",
+        lambda *args, **kwargs: iter([search]),
+    )
+    monkeypatch.setattr("rcopilot.pipeline.persist_queries_to_project", lambda *args, **kwargs: None)
+
+    events = list(iter_fetch_and_store(config, store))
+    types = [event["type"] for event in events]
+    assert types[0] == "started"
+    assert types[-1] == "done"
+    ids = [event["post"]["id"] for event in events if event["type"] == "post"]
+    assert ids == ["list1", "search1"]
+    assert events[-1]["fetched"] == 2
+    assert events[-1]["shown"] == 2
+    assert store.get_post("list1") is not None
+    assert store.get_post("search1") is not None
+
+
+def test_iter_fetch_and_store_searches_first_when_queries_cached(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = Store(tmp_path / "fetch-search.db")
+    store.ensure_schema()
+    config = _config()
+    config.discovery.search_queries = ["fixture"]
+    config.discovery.queries_fingerprint = _queries_fingerprint(config)
+    listing = _discover_post("list1", "How do I learn Python?")
+    search = _discover_post("search1", "Looking for a pytest fixture pattern?")
+    monkeypatch.setattr("rcopilot.pipeline.reddit_client.get_reddit", lambda account: object())
+    monkeypatch.setattr(
+        "rcopilot.pipeline.reddit_client.iter_listing_posts",
+        lambda *args, **kwargs: iter([listing]),
+    )
+    monkeypatch.setattr(
+        "rcopilot.pipeline.reddit_client.iter_search_posts",
+        lambda *args, **kwargs: iter([search]),
+    )
+    monkeypatch.setattr("rcopilot.pipeline.persist_queries_to_project", lambda *args, **kwargs: None)
+
+    events = list(iter_fetch_and_store(config, store))
+    ids = [event["post"]["id"] for event in events if event["type"] == "post"]
+    assert ids == ["search1", "list1"]
+
+
+def test_fetch_and_store_returns_new_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = Store(tmp_path / "fetch2.db")
+    store.ensure_schema()
+    config = _config()
+    monkeypatch.setattr("rcopilot.pipeline.reddit_client.get_reddit", lambda account: object())
+    monkeypatch.setattr(
+        "rcopilot.pipeline.reddit_client.iter_listing_posts",
+        lambda *args, **kwargs: iter([_discover_post("only", "How do I learn Python?")]),
+    )
+    monkeypatch.setattr(
+        "rcopilot.pipeline.reddit_client.iter_search_posts",
+        lambda *args, **kwargs: iter([]),
+    )
+    monkeypatch.setattr("rcopilot.pipeline.persist_queries_to_project", lambda *args, **kwargs: None)
+    assert fetch_and_store(config, store) == 1
+    assert fetch_and_store(config, store) == 0

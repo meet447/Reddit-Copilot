@@ -100,6 +100,21 @@ def test_answered_question_skips_radar_boost() -> None:
     assert not any("unanswered question" in reason for reason in reasons)
 
 
+def test_num_comments_marks_answered_without_comment_bodies() -> None:
+    labels = classify_intent(
+        _post(title="How do I learn Python?", top_comments=[], num_comments=4)
+    )
+    assert "question" in labels
+    assert "unanswered" not in labels
+
+
+def test_num_comments_zero_is_unanswered() -> None:
+    labels = classify_intent(
+        _post(title="How do I learn Python?", top_comments=[{"body": "stale"}], num_comments=0)
+    )
+    assert "unanswered" in labels
+
+
 def test_product_blurb_matches_intent() -> None:
     post = _post(
         title="Looking for a local Reddit engagement assistant",

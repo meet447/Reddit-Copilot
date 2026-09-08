@@ -6,7 +6,7 @@ import html
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterator
 
 import praw
 from praw.exceptions import RedditAPIException
@@ -152,6 +152,10 @@ def _submission_to_post(
     include_comments: bool = True,
 ) -> dict[str, Any]:
     name = subreddit_name or str(getattr(submission.subreddit, "display_name", "") or submission.subreddit)
+    try:
+        num_comments = int(getattr(submission, "num_comments", 0) or 0)
+    except (TypeError, ValueError):
+        num_comments = 0
     return {
         "id": submission.id,
         "subreddit": name,
@@ -161,19 +165,20 @@ def _submission_to_post(
         "permalink": f"https://www.reddit.com{submission.permalink}",
         "created_utc": float(submission.created_utc or 0),
         "top_comments": _top_comments(submission) if include_comments else [],
+        "num_comments": num_comments,
     }
 
 
-def fetch_posts(
+def iter_listing_posts(
     reddit: praw.Reddit,
     subreddits: list[str],
     listing: str,
     limit: int,
-) -> list[dict[str, Any]]:
-    """Fetch recent submissions from *subreddits*."""
-    posts: list[dict[str, Any]] = []
+    *,
+    include_comments: bool = True,
+) -> Iterator[dict[str, Any]]:
+    """Yield recent submissions from *subreddits* as Reddit returns them."""
     seen: set[str] = set()
-
     for subreddit_name in subreddits:
         logger.info("Fetching %s/%s (limit=%d)", listing, subreddit_name, limit)
         try:
@@ -186,27 +191,39 @@ def fetch_posts(
             if submission.id in seen:
                 continue
             seen.add(submission.id)
-            posts.append(_submission_to_post(submission, subreddit_name=subreddit_name))
+            yield _submission_to_post(
+                submission,
+                subreddit_name=subreddit_name,
+                include_comments=include_comments,
+            )
 
+
+def fetch_posts(
+    reddit: praw.Reddit,
+    subreddits: list[str],
+    listing: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Fetch recent submissions from *subreddits*."""
+    posts = list(iter_listing_posts(reddit, subreddits, listing, limit))
     logger.info("Fetched %d posts from %d subreddit(s)", len(posts), len(subreddits))
     return posts
 
 
-def search_posts(
+def iter_search_posts(
     reddit: praw.Reddit,
     subreddits: list[str],
     queries: list[str],
     *,
     limit_per_query: int = 10,
-) -> list[dict[str, Any]]:
-    """Search configured subreddits with LLM/fallback queries."""
+) -> Iterator[dict[str, Any]]:
+    """Yield search matches as Reddit returns them."""
     cleaned = [query.strip() for query in queries if query and query.strip()]
     if not subreddits or not cleaned:
-        return []
+        return
 
     combo = "+".join(subreddits)
     target = reddit.subreddit(combo)
-    posts: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     for query in cleaned:
@@ -226,9 +243,26 @@ def search_posts(
             if submission.id in seen:
                 continue
             seen.add(submission.id)
-            posts.append(_submission_to_post(submission, include_comments=False))
+            yield _submission_to_post(submission, include_comments=False)
 
-    logger.info("Search returned %d post(s) from %d quer(y/ies)", len(posts), len(cleaned))
+
+def search_posts(
+    reddit: praw.Reddit,
+    subreddits: list[str],
+    queries: list[str],
+    *,
+    limit_per_query: int = 10,
+) -> list[dict[str, Any]]:
+    """Search configured subreddits with LLM/fallback queries."""
+    posts = list(
+        iter_search_posts(
+            reddit,
+            subreddits,
+            queries,
+            limit_per_query=limit_per_query,
+        )
+    )
+    logger.info("Search returned %d post(s) from %d quer(y/ies)", len(posts), len(queries))
     return posts
 
 

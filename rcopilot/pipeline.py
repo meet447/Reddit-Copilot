@@ -52,6 +52,15 @@ def _voice_kwargs(config: AppConfig) -> dict[str, str]:
     }
 
 
+def _cached_search_queries(config: AppConfig) -> list[str]:
+    """Return saved search queries when the briefing fingerprint still matches."""
+    fingerprint = _queries_fingerprint(config)
+    cached = [query.strip() for query in config.discovery.search_queries if query.strip()]
+    if cached and config.discovery.queries_fingerprint == fingerprint:
+        return cached
+    return []
+
+
 def _queries_fingerprint(config: AppConfig) -> str:
     payload = {
         "product": config.voice.product,
@@ -71,10 +80,10 @@ def ensure_search_queries(
     config_path: str | Path | None = None,
 ) -> list[str]:
     """Return cached LLM/fallback search queries, regenerating when voice or keywords change."""
-    fingerprint = _queries_fingerprint(config)
-    cached = [query.strip() for query in config.discovery.search_queries if query.strip()]
-    if cached and config.discovery.queries_fingerprint == fingerprint:
+    cached = _cached_search_queries(config)
+    if cached:
         return cached
+    fingerprint = _queries_fingerprint(config)
 
     queries: list[str] = []
     if config.llm.api_key:
@@ -102,13 +111,67 @@ def ensure_search_queries(
     return queries
 
 
-def fetch_and_store(
+def _persist_discovered_post(
+    store: Store,
+    post: dict[str, Any],
+    config: AppConfig,
+    *,
+    project_id: str,
+    existing_ids: set[str],
+    seen: set[str],
+) -> tuple[dict[str, Any] | None, bool]:
+    """Store and score one Reddit post. Returns (stored row, is_new) or (None, False) if duplicate in this run."""
+    post_id = str(post.get("id") or "")
+    if not post_id or post_id in seen:
+        return None, False
+    seen.add(post_id)
+    is_new = post_id not in existing_ids
+    store.upsert_post(
+        id=post["id"],
+        subreddit=post["subreddit"],
+        title=post["title"],
+        selftext=post["selftext"],
+        url=post["url"],
+        permalink=post["permalink"],
+        created_utc=float(post.get("created_utc") or 0),
+        top_comments=post.get("top_comments") or [],
+        project_id=project_id,
+    )
+    apply_scores(
+        store,
+        [post],
+        config.discovery,
+        product=config.voice.product,
+        project_id=project_id,
+    )
+    stored = store.get_post(post_id, project_id=project_id)
+    if is_new:
+        existing_ids.add(post_id)
+    return stored, is_new
+
+
+def _should_emit_discover_post(
+    store: Store,
+    post: dict[str, Any] | None,
+    config: AppConfig,
+    *,
+    project_id: str,
+) -> bool:
+    if post is None or post.get("skipped"):
+        return False
+    if store.draft_exists_for_post(str(post["id"]), project_id=project_id):
+        return False
+    min_score = config.discovery.min_score
+    return float(post.get("relevance_score") or 0) >= min_score
+
+
+def iter_fetch_and_store(
     config: AppConfig,
     store: Store,
     *,
     config_path: str | Path | None = None,
-) -> int:
-    """Fetch posts from Reddit, persist, and score them. Returns count of new posts."""
+) -> Iterator[dict[str, Any]]:
+    """Fetch, persist, and score posts, yielding each Discover-ready thread as it lands."""
     store.ensure_schema()
     if not config.subreddits:
         raise ValueError("No subreddits configured in config.yaml")
@@ -121,68 +184,100 @@ def fetch_and_store(
         raise ValueError("Reddit is not connected. Use Connect Reddit in onboarding or Settings.")
     reddit = reddit_client.get_reddit(account)
     project_id = _project_id(config)
-
     existing_ids = store.list_post_ids(project_id=project_id)
-
-    queries = ensure_search_queries(config, config_path=config_path)
-    persist_queries_to_project(store, config)
-    fetched = reddit_client.fetch_posts(
-        reddit,
-        config.subreddits,
-        config.listing,
-        config.fetch_limit,
-    )
-    search_limit = min(10, max(5, config.fetch_limit))
-    searched = reddit_client.search_posts(
-        reddit,
-        config.subreddits,
-        queries,
-        limit_per_query=search_limit,
-    )
-
-    merged: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for post in searched + fetched:
-        if post["id"] in seen:
-            continue
-        seen.add(post["id"])
-        merged.append(post)
-
     new_count = 0
-    stored_posts: list[dict[str, Any]] = []
-    for post in merged:
-        is_new = post["id"] not in existing_ids
-        store.upsert_post(**post, project_id=project_id)
-        stored_posts.append(store.get_post(post["id"], project_id=project_id) or post)
-        if is_new:
-            existing_ids.add(post["id"])
-            new_count += 1
+    listed = 0
+    searched_count = 0
+    shown = 0
+    yield {"type": "started"}
 
-    apply_scores(
-        store,
-        stored_posts,
-        config.discovery,
-        product=config.voice.product,
-        project_id=project_id,
-    )
+    def ingest(post: dict[str, Any], *, source: str) -> Iterator[dict[str, Any]]:
+        nonlocal new_count, listed, searched_count, shown
+        stored, is_new = _persist_discovered_post(
+            store,
+            post,
+            config,
+            project_id=project_id,
+            existing_ids=existing_ids,
+            seen=seen,
+        )
+        if source == "listing":
+            listed += 1
+        else:
+            searched_count += 1
+        if is_new:
+            new_count += 1
+        if _should_emit_discover_post(store, stored, config, project_id=project_id):
+            shown += 1
+            yield {"type": "post", "post": stored, "is_new": is_new}
+
+    def run_listing() -> Iterator[dict[str, Any]]:
+        for post in reddit_client.iter_listing_posts(
+            reddit,
+            config.subreddits,
+            config.listing,
+            config.fetch_limit,
+            include_comments=False,
+        ):
+            yield from ingest(post, source="listing")
+
+    def run_search(queries: list[str]) -> Iterator[dict[str, Any]]:
+        search_limit = min(10, max(5, config.fetch_limit))
+        for post in reddit_client.iter_search_posts(
+            reddit,
+            config.subreddits,
+            queries,
+            limit_per_query=search_limit,
+        ):
+            yield from ingest(post, source="search")
+
+    cached_queries = _cached_search_queries(config)
+    if cached_queries:
+        queries = cached_queries
+        persist_queries_to_project(store, config)
+        yield from run_search(queries)
+        yield from run_listing()
+    else:
+        yield from run_listing()
+        queries = ensure_search_queries(config, config_path=config_path)
+        persist_queries_to_project(store, config)
+        yield from run_search(queries)
+
     store.add_audit(
         "fetched",
         project_id=project_id,
         detail={
             "new_count": new_count,
-            "total": len(stored_posts),
+            "shown": shown,
+            "total": len(seen),
             "search_queries": queries,
         },
     )
     logger.info(
-        "Stored %d new post(s), scored %d (search=%d listing=%d queries=%d)",
+        "Stored %d new post(s), scored %d (search=%d listing=%d queries=%d shown=%d)",
         new_count,
-        len(stored_posts),
-        len(searched),
-        len(fetched),
+        len(seen),
+        searched_count,
+        listed,
         len(queries),
+        shown,
     )
-    return new_count
+    yield {"type": "done", "fetched": new_count, "shown": shown, "total": len(seen)}
+
+
+def fetch_and_store(
+    config: AppConfig,
+    store: Store,
+    *,
+    config_path: str | Path | None = None,
+) -> int:
+    """Fetch posts from Reddit, persist, and score them. Returns count of new posts."""
+    fetched = 0
+    for event in iter_fetch_and_store(config, store, config_path=config_path):
+        if event.get("type") == "done":
+            fetched = int(event.get("fetched") or 0)
+    return fetched
 
 
 def _generate_draft_body(config: AppConfig, post: dict[str, Any]) -> str:

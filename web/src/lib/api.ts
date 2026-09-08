@@ -491,6 +491,75 @@ export function fetchThreads(): Promise<{ fetched: number }> {
   return request<{ fetched: number }>("/api/actions/fetch", { method: "POST" });
 }
 
+export async function streamFetchThreads(
+  onPost: (post: Post) => void,
+): Promise<{ fetched: number; shown: number }> {
+  const res = await fetch("/api/actions/fetch", {
+    method: "POST",
+    cache: "no-store",
+    headers: { Accept: "text/event-stream" },
+  });
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try {
+      const data = (await res.json()) as { error?: string; detail?: string };
+      if (data.error) message = data.error;
+      else if (typeof data.detail === "string") message = data.detail;
+    } catch {
+      // ignore
+    }
+    throw new ApiError(message, res.status);
+  }
+  if (!res.body) {
+    throw new ApiError("No stream from API", res.status || 500);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fetched = 0;
+  let shown = 0;
+  let sawDone = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const line = chunk
+        .split("\n")
+        .find((entry) => entry.startsWith("data: "));
+      if (!line) continue;
+      const payload = JSON.parse(line.slice(6)) as {
+        type?: string;
+        post?: Post;
+        fetched?: number;
+        shown?: number;
+        error?: string;
+      };
+      if (payload.type === "error" || payload.error) {
+        throw new ApiError(payload.error || "Fetch failed", 400);
+      }
+      if (payload.type === "post" && payload.post) {
+        shown += 1;
+        onPost(payload.post);
+      }
+      if (payload.type === "done") {
+        fetched = payload.fetched ?? 0;
+        shown = payload.shown ?? shown;
+        sawDone = true;
+      }
+    }
+  }
+
+  if (!sawDone) {
+    throw new ApiError("Fetch ended before Reddit finished", 500);
+  }
+  return { fetched, shown };
+}
+
 export function generateDrafts(): Promise<{ drafted: number }> {
   return request<{ drafted: number }>("/api/actions/draft", { method: "POST" });
 }

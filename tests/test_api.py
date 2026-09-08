@@ -217,3 +217,36 @@ def test_generate_variants_unknown_draft(client: TestClient) -> None:
     response = client.post("/api/drafts/1/variants")
     assert response.status_code == 400
     assert "not found" in response.json()["error"].lower()
+
+
+def test_fetch_stream_emits_posts(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_iter(*args, **kwargs):
+        yield {
+            "type": "post",
+            "is_new": True,
+            "post": {
+                "id": "p1",
+                "subreddit": "python",
+                "title": "How do I learn Python?",
+                "selftext": "Looking for resources",
+                "url": "https://example.com",
+                "permalink": "https://reddit.com/r/python/comments/p1",
+                "created_utc": 1.0,
+                "top_comments": [],
+                "relevance_score": 0.6,
+                "score_reasons": ["question signal (+0.20)"],
+                "keywords_matched": [],
+                "intent_labels": ["question", "unanswered"],
+                "skipped": False,
+            },
+        }
+        yield {"type": "done", "fetched": 1, "total": 1}
+
+    monkeypatch.setattr("rcopilot.api.iter_fetch_and_store", fake_iter)
+    with client.stream("POST", "/api/actions/fetch", headers={"Accept": "text/event-stream"}) as response:
+        assert response.status_code == 200
+        body = "".join(response.iter_text())
+    assert '"type": "post"' in body
+    assert "How do I learn Python?" in body
+    assert '"type": "done"' in body
+    assert '"type": "started"' in body

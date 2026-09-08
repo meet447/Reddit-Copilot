@@ -175,6 +175,16 @@ def _normalize_comments(post: dict[str, Any]) -> list[Any]:
     return comments if isinstance(comments, list) else []
 
 
+def _comment_count(post: dict[str, Any]) -> int:
+    raw = post.get("num_comments")
+    if raw is not None:
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            pass
+    return len(_normalize_comments(post))
+
+
 def _is_question_text(text: str) -> bool:
     lowered = text.strip().lower()
     if not lowered:
@@ -202,7 +212,6 @@ def _is_complaint(text: str) -> bool:
 def classify_intent(post: dict[str, Any]) -> list[str]:
     """Return stable intent label slugs for a post."""
     text = f"{post.get('title', '')} {post.get('selftext', '')}".lower()
-    comments = _normalize_comments(post)
     labels: list[str] = []
 
     if _is_question(post):
@@ -211,7 +220,7 @@ def classify_intent(post: dict[str, Any]) -> list[str]:
         labels.append("looking-for-tool")
     if _is_complaint(text):
         labels.append("complaint")
-    if len(comments) == 0:
+    if _comment_count(post) == 0:
         labels.append("unanswered")
 
     return labels
@@ -304,8 +313,7 @@ def score_post(
         score += 0.15
         reasons.append("unanswered question (+0.15)")
 
-    comments = _normalize_comments(post)
-    if len(comments) <= 1:
+    if _comment_count(post) <= 1:
         score += 0.15
         reasons.append("light discussion (+0.15)")
 

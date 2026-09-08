@@ -49,9 +49,10 @@ from rcopilot.pipeline import (
     edit_draft,
     fetch_and_store,
     finish_draft_stream,
-    generate_submission_ideas,
     generate_draft_variants,
+    generate_submission_ideas,
     iter_draft_deltas,
+    iter_fetch_and_store,
     poll_outcomes,
     post_approved,
     queue_post,
@@ -568,9 +569,39 @@ def create_app(config_path: str | None = None) -> FastAPI:
         return _serialize_post(post)  # type: ignore[arg-type]
 
     @app.post("/api/actions/fetch")
-    def action_fetch() -> dict[str, int]:
+    def action_fetch(request: Request) -> Any:
         config = get_config()
         store = get_store(config)
+        accept = (request.headers.get("accept") or "").lower()
+        if "text/event-stream" in accept:
+
+            def event_stream() -> Iterator[str]:
+                # SSE comment + started event so proxies flush before Reddit I/O.
+                yield ": " + (" " * 2048) + "\n\n"
+                yield f"data: {json.dumps({'type': 'started'})}\n\n"
+                try:
+                    for event in iter_fetch_and_store(
+                        config, store, config_path=resolved_path
+                    ):
+                        payload = dict(event)
+                        if payload.get("type") == "post" and payload.get("post"):
+                            payload["post"] = _serialize_post(payload["post"])
+                        yield f"data: {json.dumps(payload)}\n\n"
+                except ValueError as exc:
+                    yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+                except Exception as exc:
+                    logger.exception("Streaming fetch failed: %s", exc)
+                    yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
         try:
             fetched = fetch_and_store(config, store, config_path=resolved_path)
         except ValueError as exc:

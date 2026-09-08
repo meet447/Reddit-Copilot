@@ -5,7 +5,7 @@ import {
   getPosts,
   queuePost,
   skipPost,
-  fetchThreads,
+  streamFetchThreads,
   ApiError,
   type Post,
 } from "@/lib/api";
@@ -16,6 +16,7 @@ import { Surface } from "@/components/ui/surface";
 import { SubredditName } from "@/components/ui/subreddit-name";
 import { IconPlus, IconSkip, IconRefresh } from "@/components/ui/icons";
 import { Input, Field, Label } from "@/components/ui/field";
+import { Dots } from "@/components/ui/dots";
 
 const INTENT_LABELS: { slug: string; label: string }[] = [
   { slug: "question", label: "Question" },
@@ -34,6 +35,17 @@ const FILTERS: { id: string | null; label: string }[] = [
 
 function labelDisplay(slug: string): string {
   return INTENT_LABELS.find((item) => item.slug === slug)?.label ?? slug;
+}
+
+function mergeDiscoverPost(posts: Post[], incoming: Post): Post[] {
+  const next = posts.filter((item) => item.id !== incoming.id);
+  next.push(incoming);
+  next.sort((a, b) => {
+    const score = (b.relevance_score ?? 0) - (a.relevance_score ?? 0);
+    if (score !== 0) return score;
+    return (b.created_utc ?? 0) - (a.created_utc ?? 0);
+  });
+  return next;
 }
 
 export function DiscoverView() {
@@ -92,15 +104,24 @@ export function DiscoverView() {
     setFetching(true);
     setActionError(null);
     setMessage(null);
+    let received = 0;
     try {
-      const result = await fetchThreads();
+      const result = await streamFetchThreads((post) => {
+        received += 1;
+        setPosts((prev) => mergeDiscoverPost(prev, post));
+        setLoading(false);
+        setApiDown(false);
+        setMessage(
+          `Found ${received} thread${received === 1 ? "" : "s"} so far…`,
+        );
+      });
       await load({ silent: true });
       setApiDown(false);
-      const count = result.fetched ?? 0;
+      const count = result.shown ?? received;
       setMessage(
         count === 0
-          ? "No new threads this round."
-          : `Found ${count} new thread${count === 1 ? "" : "s"}.`,
+          ? "No matching threads this round."
+          : `Found ${count} thread${count === 1 ? "" : "s"}.`,
       );
     } catch (error) {
       if (error instanceof ApiError && error.status < 500) {
@@ -183,6 +204,13 @@ export function DiscoverView() {
         {apiDown && <ApiDownNotice />}
         {actionError && <Notice tone="clay">{actionError}</Notice>}
         {message && <Notice tone="sage">{message}</Notice>}
+        {fetching && (
+          <Notice tone="accent">
+            <span className="inline-flex items-center gap-2">
+              Fetching threads from your communities… <Dots />
+            </span>
+          </Notice>
+        )}
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Intent filters">
           {FILTERS.map((filter) => {
             const active = labelFilter === filter.id;
@@ -217,14 +245,15 @@ export function DiscoverView() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {loading || fetching ? (
+        {loading && posts.length === 0 ? (
           <PageStatus
             kind="loading"
-            message={
-              fetching
-                ? "Fetching threads from your communities…"
-                : "Looking through your communities…"
-            }
+            message="Looking through your communities…"
+          />
+        ) : filtered.length === 0 && fetching ? (
+          <PageStatus
+            kind="loading"
+            message="Fetching threads from your communities…"
           />
         ) : filtered.length === 0 ? (
           <PageStatus
