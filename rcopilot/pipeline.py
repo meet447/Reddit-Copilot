@@ -119,6 +119,7 @@ def _persist_discovered_post(
     project_id: str,
     existing_ids: set[str],
     seen: set[str],
+    from_search: bool = False,
 ) -> tuple[dict[str, Any] | None, bool]:
     """Store and score one Reddit post. Returns (stored row, is_new) or (None, False) if duplicate in this run."""
     post_id = str(post.get("id") or "")
@@ -143,6 +144,7 @@ def _persist_discovered_post(
         config.discovery,
         product=config.voice.product,
         project_id=project_id,
+        from_search=from_search,
     )
     stored = store.get_post(post_id, project_id=project_id)
     if is_new:
@@ -201,6 +203,7 @@ def iter_fetch_and_store(
             project_id=project_id,
             existing_ids=existing_ids,
             seen=seen,
+            from_search=source == "search",
         )
         if source == "listing":
             listed += 1

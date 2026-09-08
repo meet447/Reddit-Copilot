@@ -55,6 +55,10 @@ INTENT_LABELS = (
 )
 
 _TOKEN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_URLISH = re.compile(
+    r"https?://\S+|www\.\S+|github\.com/\S+|\b[\w.-]+/[\w.-]+\b",
+    re.IGNORECASE,
+)
 _STOPWORDS = frozenset(
     {
         "a",
@@ -226,11 +230,58 @@ def classify_intent(post: dict[str, Any]) -> list[str]:
     return labels
 
 
+def _briefing_plain_text(briefing: str) -> str:
+    """Drop URLs and repo paths so briefing terms are product language, not GitHub."""
+    return _URLISH.sub(" ", briefing or "")
+
+
+def _content_tokens(phrase: str, *, keep_generic: bool) -> list[str]:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for token in _TOKEN.findall(phrase.lower()):
+        if len(token) < 3 or token in _STOPWORDS:
+            continue
+        if not keep_generic and token in _GENERIC:
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        tokens.append(token)
+    return tokens
+
+
+def _token_in_text(token: str, text: str) -> bool:
+    if len(token) < 3:
+        return False
+    pattern = r"(?<![a-z0-9])" + re.escape(token) + r"s?(?![a-z0-9])"
+    return re.search(pattern, text) is not None
+
+
+def phrase_matches_text(text: str, phrase: str, *, keep_generic: bool = True) -> bool:
+    """True if *phrase* appears in *text*, including 2-gram / token-overlap for long slogans."""
+    cleaned = (phrase or "").strip().lower()
+    if not cleaned:
+        return False
+    if cleaned in text:
+        return True
+    tokens = _content_tokens(cleaned, keep_generic=keep_generic)
+    if len(tokens) >= 2:
+        for left, right in zip(tokens, tokens[1:]):
+            if f"{left} {right}" in text:
+                return True
+        hits = sum(1 for token in tokens if _token_in_text(token, text))
+        needed = 2 if len(tokens) <= 5 else 3
+        return hits >= needed
+    if len(tokens) == 1:
+        return len(tokens[0]) >= 5 and _token_in_text(tokens[0], text)
+    return False
+
+
 def intent_terms_from_briefing(briefing: str, *, limit: int = 12) -> list[str]:
     """Turn a workspace briefing into short phrases/tokens to match against threads."""
     tokens = [
         token
-        for token in _TOKEN.findall(briefing.lower())
+        for token in _TOKEN.findall(_briefing_plain_text(briefing).lower())
         if len(token) >= 4 and token not in _STOPWORDS and token not in _GENERIC
     ]
     terms: list[str] = []
@@ -256,6 +307,9 @@ def score_post(
     post: dict[str, Any],
     keywords: list[str],
     product: str = "",
+    *,
+    search_queries: list[str] | None = None,
+    from_search: bool = False,
 ) -> tuple[float, list[str], list[str], list[str]]:
     """Score a post 0..1 using intent heuristics.
 
@@ -263,12 +317,14 @@ def score_post(
 
     Heuristics:
     - keyword hits in title+selftext: +0.15 each, cap +0.5
+    - saved search-query overlap: +0.15 each, cap +0.3
     - product-blurb term hits: +0.12 each, cap +0.36
     - looking-for-tool phrasing: +0.2
     - question signal: +0.2
     - unanswered question (question radar): +0.15
     - light discussion (0-1 top comments): +0.15
     - freshness: <6h +0.15, <24h +0.05
+    - search result: +0.15
     """
     score = 0.0
     reasons: list[str] = []
@@ -276,12 +332,12 @@ def score_post(
     labels = classify_intent(post)
 
     text = f"{post.get('title', '')} {post.get('selftext', '')}".lower()
+    queries = [query.strip() for query in (search_queries or []) if query and query.strip()]
 
     if keywords:
         keyword_score = 0.0
         for keyword in keywords:
-            kw = keyword.strip().lower()
-            if kw and kw in text:
+            if phrase_matches_text(text, keyword, keep_generic=True):
                 matched.append(keyword)
                 keyword_score += 0.15
         keyword_score = min(keyword_score, 0.5)
@@ -289,11 +345,22 @@ def score_post(
             score += keyword_score
             reasons.append(f"keyword match (+{keyword_score:.2f})")
 
+    if queries:
+        query_score = 0.0
+        for query in queries:
+            if phrase_matches_text(text, query, keep_generic=True):
+                matched.append(query)
+                query_score += 0.15
+        query_score = min(query_score, 0.3)
+        if query_score:
+            score += query_score
+            reasons.append(f"query match (+{query_score:.2f})")
+
     briefing_terms = intent_terms_from_briefing(product)
     if briefing_terms:
         briefing_score = 0.0
         for term in briefing_terms:
-            if term in text:
+            if phrase_matches_text(text, term, keep_generic=False):
                 matched.append(term)
                 briefing_score += 0.12
         briefing_score = min(briefing_score, 0.36)
@@ -327,7 +394,12 @@ def score_post(
             score += 0.05
             reasons.append("recent (<24h) (+0.05)")
 
-    if (keywords or briefing_terms) and not matched:
+    if from_search and matched:
+        score += 0.15
+        reasons.append("search result (+0.15)")
+
+    fit_phrases = list(keywords or []) + queries + briefing_terms
+    if fit_phrases and not matched:
         score = min(score, 0.2)
         reasons.append("weak intent fit (capped)")
 
@@ -341,6 +413,7 @@ def apply_scores(
     product: str = "",
     *,
     project_id: str | None = None,
+    from_search: bool = False,
 ) -> None:
     """Compute and persist scores for *posts*."""
     from rcopilot.store import DEFAULT_PROJECT_ID
@@ -348,7 +421,11 @@ def apply_scores(
     scoped_id = project_id or DEFAULT_PROJECT_ID
     for post in posts:
         score, reasons, matched, labels = score_post(
-            post, discovery.keywords, product=product
+            post,
+            discovery.keywords,
+            product=product,
+            search_queries=discovery.search_queries,
+            from_search=from_search,
         )
         store.update_post(
             post["id"],

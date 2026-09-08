@@ -90,7 +90,7 @@ Return ONLY JSON with keys:
 - name: short workspace name (2–6 words)
 - briefing: 1–3 paragraph summary of who/what this is for (the background used in drafts)
 - goals: array of short goal strings
-- keywords: array of 4–12 discovery keywords/phrases Reddit users might type
+- keywords: array of 4–12 short discovery phrases (1–3 words) that Reddit users actually type. Good: "self promotion", "getting banned", "which subreddit", "lead generation". Bad: long product slogans like "reddit engagement assistant" or "promote product on reddit".
 - tone: short tone line
 - persona: short persona notes
 - avoid: things not to say or do in comments

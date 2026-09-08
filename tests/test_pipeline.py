@@ -324,6 +324,7 @@ def test_iter_fetch_and_store_yields_each_thread(
         lambda *args, **kwargs: iter([search]),
     )
     monkeypatch.setattr("rcopilot.pipeline.persist_queries_to_project", lambda *args, **kwargs: None)
+    monkeypatch.setattr("rcopilot.pipeline.ensure_search_queries", lambda *args, **kwargs: [])
 
     events = list(iter_fetch_and_store(config, store))
     types = [event["type"] for event in events]

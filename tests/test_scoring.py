@@ -143,3 +143,61 @@ def test_unrelated_thread_does_not_get_product_match() -> None:
     assert score <= 0.2
     assert any("weak intent" in reason for reason in reasons)
     assert "question" in labels
+
+
+def test_briefing_terms_skip_github_urls() -> None:
+    from rcopilot.scoring import intent_terms_from_briefing
+
+    terms = intent_terms_from_briefing(
+        "Reddit Copilot (https://github.com/meet447/Reddit-Copilot) is a "
+        "local-first Reddit engagement assistant."
+    )
+    blob = " ".join(terms)
+    assert "github" not in blob
+    assert "meet447" not in blob
+    assert "https" not in blob
+    assert any("engagement" in term for term in terms)
+
+
+def test_long_keyword_matches_natural_reddit_wording() -> None:
+    score, reasons, matched, _ = score_post(
+        _post(
+            title="My Saas audience is on reddit",
+            selftext="Where should I post without getting banned?",
+        ),
+        ["promote product on reddit", "reddit marketing tool"],
+        product="Reddit Copilot (https://github.com/meet447/Reddit-Copilot) is a local-first engagement assistant.",
+        search_queries=["how to promote my saas on reddit without getting banned"],
+    )
+    assert score >= 0.25
+    assert matched
+    assert not any("weak intent" in reason for reason in reasons)
+
+
+def test_search_hit_boosts_when_query_matches() -> None:
+    post = _post(
+        title="How do you find relevant threads to comment on?",
+        selftext="",
+        created_utc=1.0,
+        top_comments=[{"body": "try this"}, {"body": "or that"}],
+        num_comments=5,
+    )
+    keywords = ["promote product on reddit"]
+    queries = ["how do you find relevant threads to comment on"]
+    listed, _, _, _ = score_post(post, keywords, search_queries=queries, from_search=False)
+    searched, reasons, _, _ = score_post(post, keywords, search_queries=queries, from_search=True)
+    assert searched >= 0.25
+    assert searched > listed
+    assert any("search result" in reason for reason in reasons)
+
+
+def test_search_noise_without_overlap_stays_capped() -> None:
+    score, reasons, matched, _ = score_post(
+        _post(title="Best RAM for a homelab NAS", selftext="ECC vs non-ECC?"),
+        ["promote product on reddit"],
+        search_queries=["how to promote my saas on reddit without getting banned"],
+        from_search=True,
+    )
+    assert matched == []
+    assert score <= 0.2
+    assert any("weak intent" in reason for reason in reasons)

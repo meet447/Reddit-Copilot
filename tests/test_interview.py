@@ -57,7 +57,8 @@ def test_search_query_prompt_differs_for_personal() -> None:
     assert "Purpose: product" in product
     assert "not buying-intent" in personal
     assert "Purpose: personal" in personal
-    assert EXTRACT_PROMPT
+    assert "1–3 words" in EXTRACT_PROMPT
+    assert "self promotion" in EXTRACT_PROMPT
 
 
 def test_ready_marker_is_stripped() -> None:
