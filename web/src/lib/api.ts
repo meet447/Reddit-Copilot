@@ -351,6 +351,81 @@ export function generateSubmissions(input?: {
   });
 }
 
+export async function streamGenerateSubmissions(
+  onDraft: (draft: Draft) => void,
+  input?: { count?: number; subreddits?: string[] },
+): Promise<{ created: number }> {
+  const res = await fetch("/api/submissions/generate", {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Accept: "text/event-stream",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      count: input?.count ?? 5,
+      subreddits: input?.subreddits,
+    }),
+  });
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try {
+      const data = (await res.json()) as { error?: string; detail?: string };
+      if (data.error) message = data.error;
+      else if (typeof data.detail === "string") message = data.detail;
+    } catch {
+      // ignore
+    }
+    throw new ApiError(message, res.status);
+  }
+  if (!res.body) {
+    throw new ApiError("No stream from API", res.status || 500);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let created = 0;
+  let received = 0;
+  let sawDone = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const line = chunk
+        .split("\n")
+        .find((entry) => entry.startsWith("data: "));
+      if (!line) continue;
+      const payload = JSON.parse(line.slice(6)) as {
+        type?: string;
+        draft?: Draft;
+        created?: number;
+        error?: string;
+      };
+      if (payload.type === "error" || payload.error) {
+        throw new ApiError(payload.error || "Generate failed", 400);
+      }
+      if (payload.type === "draft" && payload.draft) {
+        received += 1;
+        onDraft(payload.draft);
+      }
+      if (payload.type === "done") {
+        created = payload.created ?? received;
+        sawDone = true;
+      }
+    }
+  }
+
+  if (!sawDone) {
+    throw new ApiError("Generate ended before ideas finished", 500);
+  }
+  return { created };
+}
+
 export function suggestSubreddits(input?: {
   product?: string;
   tone?: string;

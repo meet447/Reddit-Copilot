@@ -578,15 +578,15 @@ def create_submission_draft(
     return draft_id
 
 
-def generate_submission_ideas(
+def iter_generate_submission_ideas(
     config: AppConfig,
     store: Store,
     *,
     count: int = 5,
     subreddits: list[str] | None = None,
     account_name: str | None = None,
-) -> list[int]:
-    """Ask the LLM for original self-posts across configured subreddits."""
+) -> Iterator[dict[str, Any]]:
+    """Ask the LLM for original self-posts, yielding each draft as it is saved."""
     store.ensure_schema()
     if not config.llm.api_key:
         raise ValueError("Missing LLM_API_KEY in .env (or llm.api_key in config)")
@@ -599,6 +599,7 @@ def generate_submission_ideas(
         raise ValueError("No subreddits configured — add some in Settings")
 
     created_ids: list[int] = []
+    yield {"type": "started", "count": count}
     for index in range(count):
         subreddit = pool[index % len(pool)]
         try:
@@ -621,12 +622,37 @@ def generate_submission_ideas(
                 detail={"subreddit": subreddit, "title": title},
             )
             created_ids.append(draft_id)
+            row = store.get_draft(draft_id)
+            if row is not None:
+                yield {"type": "draft", "draft": row}
         except Exception as exc:
             logger.warning("Failed to generate submission for r/%s: %s", subreddit, exc)
             store.add_audit(
                 "submission_generate_error",
                 detail={"subreddit": subreddit, "error": str(exc)},
             )
+    yield {"type": "done", "created": len(created_ids)}
+
+
+def generate_submission_ideas(
+    config: AppConfig,
+    store: Store,
+    *,
+    count: int = 5,
+    subreddits: list[str] | None = None,
+    account_name: str | None = None,
+) -> list[int]:
+    """Ask the LLM for original self-posts across configured subreddits."""
+    created_ids: list[int] = []
+    for event in iter_generate_submission_ideas(
+        config,
+        store,
+        count=count,
+        subreddits=subreddits,
+        account_name=account_name,
+    ):
+        if event.get("type") == "draft" and event.get("draft"):
+            created_ids.append(int(event["draft"]["id"]))
     return created_ids
 
 

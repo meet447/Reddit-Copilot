@@ -16,7 +16,7 @@ from rcopilot.config import (
     WorkerConfig,
 )
 from rcopilot.llm import parse_submission_payload
-from rcopilot.pipeline import generate_submission_ideas
+from rcopilot.pipeline import generate_submission_ideas, iter_generate_submission_ideas
 from rcopilot.store import Store
 
 
@@ -86,3 +86,24 @@ def test_generate_submission_ideas_mocked(
     assert draft["kind"] == "submission"
     assert draft["target_subreddit"] == "python"
     assert draft["title"] == "Title for python"
+
+
+def test_iter_generate_submission_ideas_yields_each_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path / "gen-iter.db")
+    store.ensure_schema()
+    config = _config()
+    config.subreddits = ["python", "startups"]
+
+    monkeypatch.setattr(
+        "rcopilot.pipeline.generate_submission",
+        lambda llm, *, subreddit, **kwargs: (f"Title for {subreddit}", f"Body for {subreddit}"),
+    )
+
+    events = list(iter_generate_submission_ideas(config, store, count=2))
+    types = [event["type"] for event in events]
+    assert types == ["started", "draft", "draft", "done"]
+    drafts = [event["draft"] for event in events if event["type"] == "draft"]
+    assert [row["target_subreddit"] for row in drafts] == ["python", "startups"]
+    assert events[-1]["created"] == 2

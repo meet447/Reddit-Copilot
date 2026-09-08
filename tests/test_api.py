@@ -180,6 +180,54 @@ def test_generate_submissions_api(
     assert data["drafts"][0]["title"].startswith("Idea for")
 
 
+def test_generate_submissions_stream_emits_drafts(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_iter(*args, **kwargs):
+        yield {"type": "started", "count": 1}
+        yield {
+            "type": "draft",
+            "draft": {
+                "id": 7,
+                "post_id": None,
+                "account_name": "default",
+                "body": "A self-post body",
+                "status": "pending",
+                "error": None,
+                "permalink": None,
+                "created_at": "2026-01-01T00:00:00",
+                "updated_at": "2026-01-01T00:00:00",
+                "run_at": None,
+                "subreddit": "python",
+                "title": "Anyone else dealing with X?",
+                "selftext": "",
+                "url": "",
+                "post_permalink": None,
+                "created_utc": None,
+                "top_comments": [],
+                "relevance_score": 0,
+                "score_reasons": [],
+                "kind": "submission",
+                "target_subreddit": "python",
+            },
+        }
+        yield {"type": "done", "created": 1}
+
+    monkeypatch.setattr("rcopilot.api.iter_generate_submission_ideas", fake_iter)
+    with client.stream(
+        "POST",
+        "/api/submissions/generate",
+        headers={"Accept": "text/event-stream"},
+        json={"count": 1},
+    ) as response:
+        assert response.status_code == 200
+        body = "".join(response.iter_text())
+    assert '"type": "started"' in body
+    assert '"type": "draft"' in body
+    assert "Anyone else dealing with X?" in body
+    assert '"type": "done"' in body
+
+
 def test_suggest_subreddits_api(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

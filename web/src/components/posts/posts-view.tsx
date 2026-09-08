@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  generateSubmissions,
   getBestTimes,
   getDrafts,
   postDraft,
   rejectDraft,
   scheduleDraft,
+  streamGenerateSubmissions,
+  ApiError,
   type Draft,
 } from "@/lib/api";
 import { truncate } from "@/lib/format";
@@ -25,6 +26,18 @@ import {
   toDatetimeLocalValue,
 } from "@/lib/format";
 import { SubredditName } from "@/components/ui/subreddit-name";
+import { Dots } from "@/components/ui/dots";
+
+function mergeSubmissionDraft(drafts: Draft[], incoming: Draft): Draft[] {
+  const next = drafts.filter((item) => item.id !== incoming.id);
+  next.push(incoming);
+  next.sort((a, b) => {
+    const time = (b.created_at || "").localeCompare(a.created_at || "");
+    if (time !== 0) return time;
+    return b.id - a.id;
+  });
+  return next;
+}
 
 export function PostsView() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -33,13 +46,14 @@ export function PostsView() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
   const [schedulingId, setSchedulingId] = useState<number | null>(null);
   const [scheduleValue, setScheduleValue] = useState(
     toDatetimeLocalValue(new Date(Date.now() + 3600_000).toISOString()),
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       const all = await getDrafts("pending");
       setDrafts(all.filter((d) => d.kind === "submission"));
@@ -48,7 +62,7 @@ export function PostsView() {
       setApiDown(true);
       setDrafts([]);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
@@ -57,21 +71,39 @@ export function PostsView() {
   }, [load]);
 
   async function handleGenerate() {
-    setBusy("generate");
+    setGenerating(true);
     setError(null);
     setMessage(null);
+    let received = 0;
     try {
-      const result = await generateSubmissions({ count: 5 });
+      const result = await streamGenerateSubmissions((draft) => {
+        received += 1;
+        setDrafts((prev) => mergeSubmissionDraft(prev, draft));
+        setLoading(false);
+        setApiDown(false);
+        setMessage(
+          `Drafted ${received} post${received === 1 ? "" : "s"} so far…`,
+        );
+      });
+      await load({ silent: true });
+      setApiDown(false);
+      const count = result.created || received;
       setMessage(
-        result.created
-          ? `Drafted ${result.created} post${result.created === 1 ? "" : "s"}. Review, then post or schedule.`
+        count
+          ? `Drafted ${count} post${count === 1 ? "" : "s"}. Review, then post or schedule.`
           : "No posts were generated. Check your LLM key and subreddits.",
       );
-      await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not generate posts.");
+      if (e instanceof ApiError && e.status < 500) {
+        setError(e.message);
+        setApiDown(false);
+      } else if (e instanceof Error) {
+        setError(e.message);
+      } else {
+        setError("Could not generate posts.");
+      }
     } finally {
-      setBusy(null);
+      setGenerating(false);
     }
   }
 
@@ -156,7 +188,7 @@ export function PostsView() {
           </Link>
           <Button
             leading={<IconDraft size={16} />}
-            loading={busy === "generate"}
+            loading={generating}
             onClick={() => void handleGenerate()}
           >
             Generate ideas
@@ -168,15 +200,20 @@ export function PostsView() {
         {apiDown && <ApiDownNotice />}
         {error && <Notice tone="clay">{error}</Notice>}
         {message && <Notice tone="sage">{message}</Notice>}
+        {generating && (
+          <Notice tone="accent">
+            <span className="inline-flex items-center gap-2">
+              Drafting posts for your communities… <Dots />
+            </span>
+          </Notice>
+        )}
 
-        {loading || busy === "generate" ? (
+        {loading && drafts.length === 0 ? (
+          <PageStatus kind="loading" message="Loading posts…" />
+        ) : drafts.length === 0 && generating ? (
           <PageStatus
             kind="loading"
-            message={
-              busy === "generate"
-                ? "Drafting posts for your communities…"
-                : "Loading posts…"
-            }
+            message="Drafting posts for your communities…"
           />
         ) : drafts.length === 0 ? (
           <PageStatus

@@ -54,6 +54,7 @@ from rcopilot.pipeline import (
     generate_submission_ideas,
     iter_draft_deltas,
     iter_fetch_and_store,
+    iter_generate_submission_ideas,
     poll_outcomes,
     post_approved,
     queue_post,
@@ -657,9 +658,45 @@ def create_app(config_path: str | None = None) -> FastAPI:
         return _serialize_draft(draft, product=config.voice.product)  # type: ignore[arg-type]
 
     @app.post("/api/submissions/generate")
-    def generate_submissions(body: GenerateSubmissionsBody) -> dict[str, Any]:
+    def generate_submissions(body: GenerateSubmissionsBody, request: Request) -> Any:
         config = get_config()
         store = get_store(config)
+        accept = (request.headers.get("accept") or "").lower()
+        if "text/event-stream" in accept:
+
+            def event_stream() -> Iterator[str]:
+                yield ": " + (" " * 2048) + "\n\n"
+                yield f"data: {json.dumps({'type': 'started'})}\n\n"
+                try:
+                    for event in iter_generate_submission_ideas(
+                        config,
+                        store,
+                        count=body.count,
+                        subreddits=body.subreddits,
+                        account_name=body.account_name,
+                    ):
+                        payload = dict(event)
+                        if payload.get("type") == "draft" and payload.get("draft"):
+                            payload["draft"] = _serialize_draft(
+                                payload["draft"],
+                                product=config.voice.product,
+                            )
+                        yield f"data: {json.dumps(payload)}\n\n"
+                except ValueError as exc:
+                    yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+                except Exception as exc:
+                    logger.exception("Streaming submission generate failed: %s", exc)
+                    yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
         try:
             ids = generate_submission_ideas(
                 config,
