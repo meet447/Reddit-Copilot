@@ -27,6 +27,10 @@ import {
 } from "@/lib/format";
 import { SubredditName } from "@/components/ui/subreddit-name";
 import { Dots } from "@/components/ui/dots";
+import {
+  STREAM_SLOT_COUNT,
+  StreamCardSkeletons,
+} from "@/components/ui/stream-card-skeleton";
 
 function mergeSubmissionDraft(drafts: Draft[], incoming: Draft): Draft[] {
   const next = drafts.filter((item) => item.id !== incoming.id);
@@ -47,6 +51,7 @@ export function PostsView() {
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [pendingSlots, setPendingSlots] = useState(0);
   const [schedulingId, setSchedulingId] = useState<number | null>(null);
   const [scheduleValue, setScheduleValue] = useState(
     toDatetimeLocalValue(new Date(Date.now() + 3600_000).toISOString()),
@@ -72,6 +77,7 @@ export function PostsView() {
 
   async function handleGenerate() {
     setGenerating(true);
+    setPendingSlots(STREAM_SLOT_COUNT);
     setError(null);
     setMessage(null);
     let received = 0;
@@ -79,6 +85,7 @@ export function PostsView() {
       const result = await streamGenerateSubmissions((draft) => {
         received += 1;
         setDrafts((prev) => mergeSubmissionDraft(prev, draft));
+        setPendingSlots((slots) => Math.max(0, slots - 1));
         setLoading(false);
         setApiDown(false);
         setMessage(
@@ -104,6 +111,7 @@ export function PostsView() {
       }
     } finally {
       setGenerating(false);
+      setPendingSlots(0);
     }
   }
 
@@ -208,20 +216,15 @@ export function PostsView() {
           </Notice>
         )}
 
-        {loading && drafts.length === 0 ? (
+        {loading && drafts.length === 0 && pendingSlots === 0 ? (
           <PageStatus kind="loading" message="Loading posts…" />
-        ) : drafts.length === 0 && generating ? (
-          <PageStatus
-            kind="loading"
-            message="Drafting posts for your communities…"
-          />
-        ) : drafts.length === 0 ? (
+        ) : drafts.length === 0 && pendingSlots === 0 ? (
           <PageStatus
             kind="empty"
             message="No pending posts yet. Write one manually, or generate a batch for your configured subreddits."
           />
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3" aria-busy={generating}>
             {drafts.map((draft) => (
               <Surface
                 key={draft.id}
@@ -330,6 +333,7 @@ export function PostsView() {
                 )}
               </Surface>
             ))}
+            <StreamCardSkeletons kind="post" count={pendingSlots} />
           </div>
         )}
       </div>

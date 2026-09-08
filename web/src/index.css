@@ -59,6 +59,7 @@
   --animate-breathe-talk: breathe 1.15s ease-in-out infinite;
   --animate-blink: blink 4s ease-in-out infinite;
   --animate-dot: dot 1.4s ease-in-out infinite;
+  --animate-bone: bone 1.6s ease-in-out infinite;
   --animate-talk: talk 0.38s ease-in-out infinite;
   --animate-caret: caret 1s steps(1) infinite;
   --animate-glance: glance 2.2s ease-in-out infinite;
@@ -167,6 +168,16 @@
   40% {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes bone {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
   }
 }
 

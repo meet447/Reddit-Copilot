@@ -17,6 +17,10 @@ import { SubredditName } from "@/components/ui/subreddit-name";
 import { IconPlus, IconSkip, IconRefresh } from "@/components/ui/icons";
 import { Input, Field, Label } from "@/components/ui/field";
 import { Dots } from "@/components/ui/dots";
+import {
+  STREAM_SLOT_COUNT,
+  StreamCardSkeletons,
+} from "@/components/ui/stream-card-skeleton";
 
 const INTENT_LABELS: { slug: string; label: string }[] = [
   { slug: "question", label: "Question" },
@@ -57,6 +61,7 @@ export function DiscoverView() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
+  const [pendingSlots, setPendingSlots] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
 
   const load = useCallback(
@@ -102,6 +107,7 @@ export function DiscoverView() {
 
   async function handleFetch() {
     setFetching(true);
+    setPendingSlots(STREAM_SLOT_COUNT);
     setActionError(null);
     setMessage(null);
     let received = 0;
@@ -109,6 +115,7 @@ export function DiscoverView() {
       const result = await streamFetchThreads((post) => {
         received += 1;
         setPosts((prev) => mergeDiscoverPost(prev, post));
+        setPendingSlots((slots) => Math.max(2, slots - 1));
         setLoading(false);
         setApiDown(false);
         setMessage(
@@ -132,6 +139,7 @@ export function DiscoverView() {
       }
     } finally {
       setFetching(false);
+      setPendingSlots(0);
     }
   }
 
@@ -245,17 +253,12 @@ export function DiscoverView() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {loading && posts.length === 0 ? (
+        {loading && posts.length === 0 && pendingSlots === 0 ? (
           <PageStatus
             kind="loading"
             message="Looking through your communities…"
           />
-        ) : filtered.length === 0 && fetching ? (
-          <PageStatus
-            kind="loading"
-            message="Fetching threads from your communities…"
-          />
-        ) : filtered.length === 0 ? (
+        ) : filtered.length === 0 && pendingSlots === 0 ? (
           <PageStatus
             kind="empty"
             message={
@@ -265,7 +268,7 @@ export function DiscoverView() {
             }
           />
         ) : (
-          <div className="grid gap-3">
+          <div className="grid gap-3" aria-busy={fetching}>
             {filtered.map((post) => (
               <Surface
                 key={post.id}
@@ -325,6 +328,7 @@ export function DiscoverView() {
                 </div>
               </Surface>
             ))}
+            <StreamCardSkeletons kind="discover" count={pendingSlots} />
           </div>
         )}
       </div>
