@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from rcopilot.config import AppConfig, DiscoveryConfig, VoiceConfig
+from rcopilot.config import AppConfig, DiscoveryConfig, VoiceConfig, format_text_list
 from rcopilot.store import DEFAULT_PROJECT_ID, Store
 
 
@@ -83,7 +83,7 @@ def apply_project_to_config(config: AppConfig, project: dict[str, Any] | None) -
         product=project.get("briefing") or "",
         tone=project.get("tone") or "",
         persona=project.get("persona") or "",
-        avoid=project.get("avoid") or "",
+        avoid=format_text_list(project.get("avoid") or ""),
     )
     config.subreddits = list(project.get("subreddits") or [])
     config.discovery = DiscoveryConfig(
@@ -138,7 +138,7 @@ def serialize_project(project: dict[str, Any]) -> dict[str, Any]:
         "interview_messages": list(project.get("interview_messages") or []),
         "tone": project.get("tone") or "",
         "persona": project.get("persona") or "",
-        "avoid": project.get("avoid") or "",
+        "avoid": format_text_list(project.get("avoid") or ""),
         "subreddits": list(project.get("subreddits") or []),
         "keywords": list(project.get("keywords") or []),
         "search_queries": list(project.get("search_queries") or []),

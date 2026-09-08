@@ -9,7 +9,7 @@ from typing import Any, Iterator
 
 from openai import OpenAI
 
-from rcopilot.config import LLMConfig
+from rcopilot.config import LLMConfig, format_text_list
 from rcopilot.llm import parse_subreddit_list, suggest_subreddits
 from rcopilot.projects import _name_from_briefing
 from rcopilot.research import extract_urls, research_urls
@@ -93,7 +93,7 @@ Return ONLY JSON with keys:
 - keywords: array of 4–12 short discovery phrases (1–3 words) that Reddit users actually type. Good: "self promotion", "getting banned", "which subreddit", "lead generation". Bad: long product slogans like "reddit engagement assistant" or "promote product on reddit".
 - tone: short tone line
 - persona: short persona notes
-- avoid: things not to say or do in comments
+- avoid: string or list of things not to say or do in comments
 """
 
 
@@ -233,7 +233,7 @@ def extract_briefing(
         "keywords": keywords,
         "tone": str(data.get("tone") or "").strip(),
         "persona": str(data.get("persona") or "").strip(),
-        "avoid": str(data.get("avoid") or "").strip(),
+        "avoid": format_text_list(data.get("avoid") or ""),
     }
 
 

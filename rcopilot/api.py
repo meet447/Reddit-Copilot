@@ -25,6 +25,7 @@ from rcopilot.config import (
     VoiceConfig,
     WorkerConfig,
     env_secret_key,
+    format_text_list,
     load_config,
     sanitize_config,
     save_config,
@@ -803,7 +804,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 product=body.voice.get("product", config.voice.product),
                 tone=body.voice.get("tone", config.voice.tone),
                 persona=body.voice.get("persona", config.voice.persona),
-                avoid=body.voice.get("avoid", config.voice.avoid),
+                avoid=format_text_list(body.voice.get("avoid", config.voice.avoid)),
             )
         if body.discovery is not None:
             config.discovery = DiscoveryConfig(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rcopilot.config import format_text_list
 from rcopilot.interview import (
     EXTRACT_PROMPT,
     READY_MARKER,
@@ -36,6 +37,18 @@ def test_parse_briefing_json() -> None:
     data = _parse_briefing_json(raw)
     assert data["name"] == "Copilot"
     assert data["goals"] == ["helpful comments"]
+
+
+def test_format_avoid_list_and_python_repr() -> None:
+    assert format_text_list(["Hard selling", "Astroturfing"]) == "Hard selling\nAstroturfing"
+    dumped = (
+        "['Hard selling or marketing speak', "
+        "\"Generic filler replies that don't address the thread's actual question\"]"
+    )
+    readable = format_text_list(dumped)
+    assert readable.startswith("Hard selling or marketing speak")
+    assert "[" not in readable
+    assert "don't" in readable
 
 
 def test_search_query_prompt_differs_for_personal() -> None:

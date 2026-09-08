@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,20 +55,24 @@ class Store:
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
-        self._conn: sqlite3.Connection | None = None
+        self._local = threading.local()
 
     def connect(self) -> sqlite3.Connection:
-        if self._conn is None:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(self.db_path)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA foreign_keys = ON")
-        return self._conn
+            # SSE/stream handlers run on a different thread than the request.
+            conn = sqlite3.connect(self.db_path, timeout=30)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            self._local.conn = conn
+        return conn
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
 
     def _column_exists(self, conn: sqlite3.Connection, table: str, column: str) -> bool:
         rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -177,6 +182,7 @@ class Store:
         self._add_column_if_missing(conn, "audit_events", "project_id", "TEXT")
         self._add_column_if_missing(conn, "projects", "setup_step", "INTEGER NOT NULL DEFAULT 0")
         self._migrate_drafts_nullable_post_id(conn)
+        self._migrate_drafts_invalid_post_fk(conn)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_drafts_project ON drafts(project_id, status)"
         )
@@ -333,6 +339,102 @@ class Store:
                 created_at, updated_at, run_at, comment_id,
                 outcome_score, outcome_replies, outcome_removed, outcomes_polled_at,
                 COALESCE(kind, 'comment'), title, target_subreddit, submission_id
+            FROM drafts;
+
+            DROP TABLE drafts;
+            ALTER TABLE drafts_migrated RENAME TO drafts;
+
+            CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
+            CREATE INDEX IF NOT EXISTS idx_drafts_account_status ON drafts(account_name, status);
+            CREATE INDEX IF NOT EXISTS idx_drafts_project ON drafts(project_id, status);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_drafts_project_post_unique
+                ON drafts(project_id, post_id) WHERE post_id IS NOT NULL;
+            """
+        )
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    def _migrate_drafts_invalid_post_fk(self, conn: sqlite3.Connection) -> None:
+        """Drop drafts.post_id → posts(id) after posts moved to a composite PK."""
+        exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='drafts'"
+        ).fetchone()
+        if exists is None:
+            return
+        fks = conn.execute("PRAGMA foreign_key_list(drafts)").fetchall()
+        if not fks:
+            return
+        grouped: dict[int, list[Any]] = {}
+        for row in fks:
+            grouped.setdefault(int(row["id"]), []).append(row)
+        invalid = False
+        for parts in grouped.values():
+            mapping = {(str(row["from"]), str(row["to"])) for row in parts}
+            if mapping == {("post_id", "id")}:
+                invalid = True
+        if not invalid:
+            return
+
+        info = {row["name"]: row for row in conn.execute("PRAGMA table_info(drafts)").fetchall()}
+
+        def col(name: str, fallback: str) -> str:
+            return name if name in info else fallback
+
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executescript(
+            f"""
+            DROP TABLE IF EXISTS drafts_migrated;
+            CREATE TABLE drafts_migrated (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id TEXT,
+                project_id TEXT NOT NULL DEFAULT 'default',
+                account_name TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                permalink TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                run_at TEXT,
+                comment_id TEXT,
+                outcome_score INTEGER,
+                outcome_replies INTEGER,
+                outcome_removed INTEGER DEFAULT 0,
+                outcomes_polled_at TEXT,
+                kind TEXT NOT NULL DEFAULT 'comment',
+                title TEXT,
+                target_subreddit TEXT,
+                submission_id TEXT,
+                variants TEXT NOT NULL DEFAULT '[]'
+            );
+
+            INSERT INTO drafts_migrated (
+                id, post_id, project_id, account_name, body, status, error, permalink,
+                created_at, updated_at, run_at, comment_id,
+                outcome_score, outcome_replies, outcome_removed, outcomes_polled_at,
+                kind, title, target_subreddit, submission_id, variants
+            )
+            SELECT
+                id,
+                post_id,
+                {col("project_id", "'default'")},
+                account_name,
+                body,
+                status,
+                error,
+                permalink,
+                created_at,
+                updated_at,
+                {col("run_at", "NULL")},
+                {col("comment_id", "NULL")},
+                {col("outcome_score", "NULL")},
+                {col("outcome_replies", "NULL")},
+                {col("outcome_removed", "0")},
+                {col("outcomes_polled_at", "NULL")},
+                {col("kind", "'comment'")},
+                {col("title", "NULL")},
+                {col("target_subreddit", "NULL")},
+                {col("submission_id", "NULL")},
+                {col("variants", "'[]'")}
             FROM drafts;
 
             DROP TABLE drafts;

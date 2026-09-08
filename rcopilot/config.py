@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -9,6 +11,31 @@ from typing import Any
 
 import yaml
 from dotenv import dotenv_values, load_dotenv
+
+
+def format_text_list(value: Any) -> str:
+    """Turn a string or list into readable newline-separated text.
+
+    Interview extraction often returns `avoid` as a JSON array; storing
+    `str(list)` made Settings show Python repr like ``['Hard selling', ...]``.
+    """
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value if str(item).strip()]
+        return "\n".join(items)
+    text = str(value or "").strip()
+    if len(text) >= 2 and text.startswith("[") and text.endswith("]"):
+        parsed: Any = None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            try:
+                parsed = ast.literal_eval(text)
+            except (ValueError, SyntaxError):
+                parsed = None
+        if isinstance(parsed, list):
+            return "\n".join(str(item).strip() for item in parsed if str(item).strip())
+    return text
+
 
 DEFAULT_PROMPT_TEMPLATE = """Write a Reddit comment reply as a real person in this thread — not as an assistant, marketer, or chatbot.
 
@@ -199,7 +226,7 @@ def load_config(path: str | Path) -> AppConfig:
             product=str(voice_raw.get("product", "")),
             tone=str(voice_raw.get("tone", "")),
             persona=str(voice_raw.get("persona", "")),
-            avoid=str(voice_raw.get("avoid", "")),
+            avoid=format_text_list(voice_raw.get("avoid", "")),
         ),
         discovery=DiscoveryConfig(
             keywords=list(discovery_raw.get("keywords") or []),

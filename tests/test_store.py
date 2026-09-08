@@ -236,3 +236,69 @@ def test_draft_variants_roundtrip(tmp_path: Path) -> None:
     assert draft is not None
     assert draft["body"] == ""
     assert [item["label"] for item in draft["variants"]] == ["Direct", "Lived"]
+
+
+def test_store_usable_from_another_thread(tmp_path: Path) -> None:
+    import threading
+
+    store = Store(tmp_path / "threads.db")
+    store.ensure_schema()
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            _sample_post(store, post_id="from-thread")
+            assert store.get_post("from-thread") is not None
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+    assert errors == []
+    assert store.get_post("from-thread") is not None
+
+
+def test_drafts_fk_to_posts_id_is_rebuilt(tmp_path: Path) -> None:
+    db_path = tmp_path / "fk-mismatch.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE posts (
+            id TEXT NOT NULL,
+            project_id TEXT NOT NULL DEFAULT 'default',
+            subreddit TEXT NOT NULL,
+            title TEXT NOT NULL,
+            selftext TEXT NOT NULL,
+            url TEXT NOT NULL,
+            permalink TEXT NOT NULL,
+            created_utc REAL NOT NULL,
+            top_comments TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            PRIMARY KEY (project_id, id)
+        );
+        CREATE TABLE drafts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id TEXT,
+            project_id TEXT NOT NULL DEFAULT 'default',
+            account_name TEXT NOT NULL,
+            body TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT,
+            permalink TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (post_id) REFERENCES posts(id)
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(db_path)
+    store.ensure_schema()
+    _sample_post(store)
+    draft_id = store.create_draft("p1", "default", "Looks good!")
+    assert store.get_draft(draft_id) is not None
+    fks = store.connect().execute("PRAGMA foreign_key_list(drafts)").fetchall()
+    assert fks == []

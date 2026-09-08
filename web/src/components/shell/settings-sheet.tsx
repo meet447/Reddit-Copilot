@@ -371,10 +371,11 @@ export function SettingsSheet({
                 </Field>
                 <Field>
                   <Label htmlFor="avoid">Things to avoid</Label>
-                  <Input
+                  <Textarea
                     id="avoid"
                     value={avoid}
                     onChange={(e) => setAvoid(e.target.value)}
+                    rows={5}
                     placeholder="Hard sells, hype, asking for upvotes"
                   />
                 </Field>
